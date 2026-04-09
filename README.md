@@ -68,8 +68,8 @@ response = ask_llm("Follow-up prompt", memory_type="continue", llm_interface=int
 |---|---|
 | `llm_choice` | Provider to use (`claude_azure`, `claude`, etc.) |
 | `llm_model` | Model name (e.g., `databricks-claude-sonnet-4`) |
-| `api_key` | API key. For Bedrock, use the AWS access key |
-| `azure_endpoint` | Azure/Databricks endpoint URL. For Bedrock, use the AWS secret key |
+| `api_key` | API key.
+| `azure_endpoint` | Azure/Databricks endpoint URL. |
 | `temperature` | Generation temperature (0 = deterministic, higher = more random) |
 | `max_tokens` | Maximum generation tokens |
 | `token_max` | Threshold for splitting overly long responses |
