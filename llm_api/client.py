@@ -1215,7 +1215,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     if isinstance(memory_type, str) and memory_type == "init":
         chat_history = []
         # Add system message
-        if llm_choice in ['claude_azure']:
+        if llm_choice in ['claude', 'claude_azure']:
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
@@ -1233,7 +1233,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         chat_history = []
         
     if len(chat_history) == 0:
-        if llm_choice in ['claude_azure']:
+        if llm_choice in ['claude', 'claude_azure']:
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
