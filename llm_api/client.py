@@ -1215,7 +1215,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     if isinstance(memory_type, str) and memory_type == "init":
         chat_history = []
         # Add system message
-        if llm_choice in ['claude', 'claude_azure']:
+        if llm_choice in ['claude_azure']: # ['claude', 
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
@@ -1233,7 +1233,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         chat_history = []
         
     if len(chat_history) == 0:
-        if llm_choice in ['claude', 'claude_azure']:
+        if llm_choice in ['claude_azure']: # ['claude', 
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
@@ -1854,7 +1854,8 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                             model=llm_model,
                             max_tokens=output_max, #32000,
                             temperature=given_temperature,
-                            system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
                             messages=chat_history,
                         ) as stream:
                             message = stream.get_final_message()
