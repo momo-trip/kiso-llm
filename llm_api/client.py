@@ -1979,6 +1979,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
                 ####
+                """
                 host = given_azure_endpoint
                 client_id = client_id
                 client_secret = given_api_key
@@ -1996,14 +1997,14 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     api_key=token,
                     base_url=f"{host}"
                 )
+                """
                 ####
 
-                """
                 client = OpenAI(
                     api_key=given_api_key,
                     base_url=given_azure_endpoint 
                 )
-                """
+                
 
                 print("============ chat_histroty start ============")
                 #print(chat_history)
