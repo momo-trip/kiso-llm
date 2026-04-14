@@ -44,8 +44,7 @@ interface = LLMInterface(
     api_key="your-api-key",
     azure_endpoint="https://your-endpoint.azuredatabricks.net/serving-endpoints",
     temperature=0,
-    max_tokens=8192,
-    token_max=8192,
+    output_max=8192,
     timeout=60,
     history_path="./history.json",
     token_path="./token.json",
@@ -71,15 +70,14 @@ response = ask_llm("Follow-up prompt", memory_type="continue", llm_interface=int
 | `api_key` | API key.
 | `azure_endpoint` | Azure/Databricks endpoint URL. |
 | `temperature` | Generation temperature (0 = deterministic, higher = more random) |
-| `max_tokens` | Maximum generation tokens |
-| `token_max` | Threshold for splitting overly long responses |
+| `output_max` | Maximum output tokens |
 | `timeout` | API timeout in seconds |
 | `history_path` | File path to persist conversation history (JSON) |
 | `token_path` | File path to record token usage |
 | `database_dir` | Directory for prompt/response logs |
 | `chat_dir` | Directory for chat logs |
 | `count_path` | File path for prompt count tracking |
-| `exp_data` | Experiment metadata (dict) |
+
 
 ### memory_type
 
@@ -104,7 +102,7 @@ When the LLM response is not valid JSON, the library automatically requests corr
 
 ### Long Response Splitting
 
-When a response exceeds `token_max`, the library instructs the LLM to split the output into smaller segments, using an `ongoing` key to track continuation state.
+When a response exceeds `output_max`, the library instructs the LLM to split the output into smaller segments, using an `ongoing` key to track continuation state.
 
 ### Conversation History Management
 
