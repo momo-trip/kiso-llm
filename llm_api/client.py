@@ -376,7 +376,6 @@ class SemConfig:
 def add_line_numbers(input_file):
     if not os.path.isfile(input_file):
         return
-    
     if not os.path.exists(input_file):
         return
     
@@ -569,6 +568,7 @@ def clean_prompt(prompt):
 def create_prompt_string(prompt_items) -> str:
     # Convert any non-string items (including sets) to strings
     string_items = [str(item) for item in prompt_items]
+
     return "\n".join(string_items)
 
 
@@ -586,7 +586,6 @@ def load_prompt_count(logging_path):
     write_json(logging_path, data)
 
     return str(int(num)).zfill(4)  #num
-
 
 
 def write_prompt(database_dir, signal, data, chat_dir, count_path):
@@ -1157,14 +1156,16 @@ def calc_claude_cost_from_file(
 
 def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -> str:
 
-    ################## Initial set ##################
+    ################################
+    #### Initial set
+    ################################
+
     llm_choice = llm_interface.llm_choice
     output_max = llm_interface.output_max
     context_window = llm_interface.context_window
     temperature = llm_interface.temperature
     llm_model = llm_interface.llm_model
     client_id = llm_interface.client_id
-
     #llm_interface = config.llm_interface
 
     api_key = llm_interface.api_key
@@ -1194,12 +1195,9 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     # print(output_max)
     # print("------------")
 
-    ##################################################
-
-    DEBUG_LLM = False
-
     prompt = clean_prompt(prompt)
     prompt = create_prompt_string(prompt) #"\n".join(prompt)
+
     print(f"------------------------ Prompt ------------------------")
     print(f"{prompt}")
     print(f"--------------------------------------------------------")
@@ -1248,457 +1246,442 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
             trim_max = 180000 # 130000 # 150000
 
         # Need to trim here
-        # tmp_history_path = f'{database_dir}/tmp_history.json'
-        # write_json(tmp_history_path, chat_history)
         chat_history = trim_json_data(llm_choice, llm_model, chat_history, trim_max)
-        # chat_history = read_json(tmp_history_path)
-        # delete_file(tmp_history_path)
     
-    elif llm_choice == 'Gemini':
+    elif llm_choice == 'gemini':
         print("Getting gemini_history")
-        #gemini_history_path = "gemini_history.json"
-        #write_json(gemini_history_path, chat_history)
         gemini_history = transform_gemini_history(chat_history)
     
-    elif llm_choice == 'Llama':
+    elif llm_choice == 'llama':
         print("Does not append for llama.")
 
     if os.path.exists(token_path):
         cost = calc_claude_cost_from_file(token_path)
         print(f"Current cost: ${cost['total_cost_usd']:.2f}")
 
-    ########################################################
+    ################################
+    #### LLM interaction
+    ################################
+    
     if llm_choice == 'gpt':
+        
         if 'repair_count' in exp_data and 'file_path' in exp_data:
             print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
-        # Set OpenAI API key
-        if not DEBUG_LLM:         
-            openai.api_key = openai_api_key
+        # Set OpenAI API key                
+        openai.api_key = openai_api_key
 
-            retries = 0
-            max_retries = 10
-            wait_time = 30
-            response = None
-            while retries < max_retries:
-                try:
-                    response = openai.ChatCompletion.create(
-                        model=llm_model, #gpt_model,
-                        messages=chat_history,
-                        #messages=[
-                        #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
-                        #    {"role": "user", "content": prompt}
-                        #],
-                        response_format={"type": "json_object"},
-                        temperature=given_temperature, #0, #0.7,
-                        max_tokens=output_max,  #4096,
-                        #top_p=1.0,
-                        #frequency_penalty=0.5,
-                        #presence_penalty=0.5,
-                    )
-                    break  # Exit the loop on success
-                    
-                except openai.error.RateLimitError:
-                    retries += 1
-                    print(f"Rate limit hit. Waiting for {wait_time} seconds...")
-                    time.sleep(wait_time)
+        retries = 0
+        max_retries = 10
+        wait_time = 30
+        response = None
+        while retries < max_retries:
+            try:
+                response = openai.ChatCompletion.create(
+                    model=llm_model, #gpt_model,
+                    messages=chat_history,
+                    #messages=[
+                    #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
+                    #    {"role": "user", "content": prompt}
+                    #],
+                    response_format={"type": "json_object"},
+                    temperature=given_temperature, #0, #0.7,
+                    max_tokens=output_max,  #4096,
+                    #top_p=1.0,
+                    #frequency_penalty=0.5,
+                    #presence_penalty=0.5,
+                )
+                break  # Exit the loop on success
+                
+            except openai.error.RateLimitError:
+                retries += 1
+                print(f"Rate limit hit. Waiting for {wait_time} seconds...")
+                time.sleep(wait_time)
 
-            if response:  # Only process if the response was successful
-                text = response.choices[0].message['content']
-                print(text)
-            else:
-                print("Failed to get a response after multiple retries.")
-
-            #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
-            while(1):
-                code_blocks = extract_json_response(llm_choice, text)
-
-                if isinstance(code_blocks, bool):
-                    print("Failure in getting code_blocks.")
-
-                    chat_history.append({"role": "system", "content": "Failure in getting correct JSON format."})
-                    #chat_history.append({"role": "user", "content": "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."})
-                    instruction = "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."
-                    chat_history.append({"role": "user", "content": instruction})
-                    write_prompt(database_dir, f"request", instruction, chat_dir, count_path)
-                    # prompt_count = load_prompt_count()
-                    write_prompt(database_dir, f"user", instruction, chat_dir, count_path)
-
-                    #print(prompt)
-                    response = None
-                    while retries < max_retries:
-                        try:
-                            response = openai.ChatCompletion.create(
-                                model=gpt_model,
-                                messages=chat_history,
-                                #messages=[
-                                #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
-                                #    {"role": "user", "content": prompt}
-                                #],
-                                response_format={"type": "json_object"},
-                                temperature=given_temperature, #0, #0.7,
-                                max_tokens=output_max, #4096,
-                                #top_p=1.0,
-                                #frequency_penalty=0.5,
-                                #presence_penalty=0.5,
-                            )
-                            break  # Exit the loop on success
-                            
-                        except openai.error.RateLimitError:
-                            retries += 1
-                            print(f"Rate limit hit. Waiting for {wait_time} seconds...")
-                            time.sleep(wait_time)
-
-                    if response:  # Only process if the response was successful
-                        text = response.choices[0].message['content']
-                        print(text)
-                    else:
-                        print("Failed to get a response after multiple retries.")
-                    
-                else:
-                    print("Secceed in gettineg a correct format.")
-                    break
-
-            total_tokens = response['usage']['total_tokens']
-            print(f"Total token in {total_tokens}")
-            
-            prompt_used = response['usage']['prompt_tokens']
-            input_token = response['usage']['prompt_tokens']
-            print(f"Prompt token in {prompt_used}")
-
-            completion = response['usage']['completion_tokens']
-            output_token = response['usage']['completion_tokens']
-            print(f"Response token in {completion}")
-              
+        if response:  # Only process if the response was successful
+            text = response.choices[0].message['content']
+            print(text)
         else:
-            print("DEBUG_LLM Mode")
+            print("Failed to get a response after multiple retries.")
 
+        #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
+        while(1):
+            code_blocks = extract_json_response(llm_choice, text)
+
+            if isinstance(code_blocks, bool):
+                print("Failure in getting code_blocks.")
+
+                chat_history.append({"role": "system", "content": "Failure in getting correct JSON format."})
+                #chat_history.append({"role": "user", "content": "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."})
+                instruction = "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."
+                chat_history.append({"role": "user", "content": instruction})
+                write_prompt(database_dir, f"request", instruction, chat_dir, count_path)
+                write_prompt(database_dir, f"user", instruction, chat_dir, count_path)
+
+                #print(prompt)
+                response = None
+                while retries < max_retries:
+                    try:
+                        response = openai.ChatCompletion.create(
+                            model=gpt_model,
+                            messages=chat_history,
+                            #messages=[
+                            #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
+                            #    {"role": "user", "content": prompt}
+                            #],
+                            response_format={"type": "json_object"},
+                            temperature=given_temperature, #0, #0.7,
+                            max_tokens=output_max, #4096,
+                            #top_p=1.0,
+                            #frequency_penalty=0.5,
+                            #presence_penalty=0.5,
+                        )
+                        break  # Exit the loop on success
+                        
+                    except openai.error.RateLimitError:
+                        retries += 1
+                        print(f"Rate limit hit. Waiting for {wait_time} seconds...")
+                        time.sleep(wait_time)
+
+                if response:  # Only process if the response was successful
+                    text = response.choices[0].message['content']
+                    print(text)
+                else:
+                    print("Failed to get a response after multiple retries.")
+                
+            else:
+                print("Secceed in gettineg a correct format.")
+                break
+
+        total_tokens = response['usage']['total_tokens']
+        print(f"Total token in {total_tokens}")
+        
+        prompt_used = response['usage']['prompt_tokens']
+        input_token = response['usage']['prompt_tokens']
+        print(f"Prompt token in {prompt_used}")
+
+        completion = response['usage']['completion_tokens']
+        output_token = response['usage']['completion_tokens']
+        print(f"Response token in {completion}")
+            
 
     elif llm_choice == 'gpt_azure':
-        print("Asking gpt_azure...")
 
+        print("Asking gpt_azure...")
         given_api_version="2024-05-01-preview"  # Fixed
         given_api_version="2025-01-01-preview"
 
         if 'repair_count' in exp_data and 'file_path' in exp_data:
             print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
-        # Set OpenAI API key
-        if not DEBUG_LLM:         
-            openai.api_key = openai_api_key
+        # Set OpenAI API key       
+        openai.api_key = openai_api_key
 
-            retries = 0
-            max_retries = 10
-            wait_time = 30
-            response = None
-            while retries < max_retries:
-                try:
-                    client = AzureOpenAI(
-                        api_version=given_api_version,
-                        api_key=given_api_key,
-                        azure_endpoint=given_azure_endpoint 
-                    )
-                    response = client.chat.completions.create( #response = openai.ChatCompletion.create(
-                        model=llm_model, #gpt_model,
-                        messages=chat_history,
-                        #messages=[
-                        #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
-                        #    {"role": "user", "content": prompt}
-                        #],
-                        response_format={"type": "json_object"},
-                        temperature=given_temperature, #0, #0.7,
-                        max_tokens=output_max, #4096,
-                        #top_p=1.0,
-                        #frequency_penalty=0.5,
-                        #presence_penalty=0.5,
-                    )
-                    break  # Exit the loop on success
-                    
-                except openai.error.RateLimitError:
-                    retries += 1
-                    print(f"Rate limit hit. Waiting for {wait_time} seconds...")
-                    time.sleep(wait_time)
-
-            if response:  # Only process if the response was successful
-                text = response.choices[0].message.content  #text = response.choices[0].message['content']
-                print(text)
-
-                total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
-                print(f"Total token in {total_tokens}")
+        retries = 0
+        max_retries = 10
+        wait_time = 30
+        response = None
+        while retries < max_retries:
+            try:
+                client = AzureOpenAI(
+                    api_version=given_api_version,
+                    api_key=given_api_key,
+                    azure_endpoint=given_azure_endpoint 
+                )
+                response = client.chat.completions.create( #response = openai.ChatCompletion.create(
+                    model=llm_model, #gpt_model,
+                    messages=chat_history,
+                    #messages=[
+                    #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
+                    #    {"role": "user", "content": prompt}
+                    #],
+                    response_format={"type": "json_object"},
+                    temperature=given_temperature, #0, #0.7,
+                    max_tokens=output_max, #4096,
+                    #top_p=1.0,
+                    #frequency_penalty=0.5,
+                    #presence_penalty=0.5,
+                )
+                break  # Exit the loop on success
                 
-                prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-                input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-                print(f"Prompt token in {prompt_used}")
+            except openai.error.RateLimitError:
+                retries += 1
+                print(f"Rate limit hit. Waiting for {wait_time} seconds...")
+                time.sleep(wait_time)
 
-                completion = response.usage.completion_tokens #response['usage']['completion_tokens']
-                output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
-                print(f"Response token in {completion}")
+        if response:  # Only process if the response was successful
+            text = response.choices[0].message.content  #text = response.choices[0].message['content']
+            print(text)
+
+            total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
+            print(f"Total token in {total_tokens}")
+            
+            prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+            input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+            print(f"Prompt token in {prompt_used}")
+
+            completion = response.usage.completion_tokens #response['usage']['completion_tokens']
+            output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
+            print(f"Response token in {completion}")
+            
+            update_token(input_token, 0, token_path)
+
+        else:
+            print("Failed to get a response after multiple retries.")
+
+        #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
+        while(1):
+            code_blocks, error_text = extract_json_response(llm_choice, text)
+
+            if isinstance(code_blocks, bool):                
+                print("Failure in getting code_blocks.")
+
+                #"""
+                # Write LLM response. Is this correct?
+                write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
+                write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
+                #"""
+                update_token(0, output_token, token_path)
                 
+
+                chat_history.append({"role": "system", "content": "Failure in getting correct JSON format."})
+                #chat_history.append({"role": "user", "content": "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."})
+                instruction = "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."
+                chat_history.append({"role": "user", "content": instruction})
+                write_prompt(database_dir, f"request", instruction, chat_dir, count_path)
+                # prompt_count = load_prompt_count()
+                write_prompt(database_dir, f"user", instruction, chat_dir, count_path)
+
                 update_token(input_token, 0, token_path)
 
-            else:
-                print("Failed to get a response after multiple retries.")
+                #print(prompt)
+                response = None
+                while retries < max_retries:
+                    try:
+                        client = AzureOpenAI(
+                            api_version=given_api_version,
+                            api_key=given_api_key,
+                            azure_endpoint=given_azure_endpoint
+                        )
+                        response = client.chat.completions.create( #response = openai.ChatCompletion.create(
+                            model=gpt_model,
+                            messages=chat_history,
+                            #messages=[
+                            #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
+                            #    {"role": "user", "content": prompt}
+                            #],
+                            response_format={"type": "json_object"},
+                            temperature=given_temperature, #0, #0.7,
+                            max_tokens=output_max, #4096,
+                            #top_p=1.0,
+                            #frequency_penalty=0.5,
+                            #presence_penalty=0.5,
+                        )
+                        break  # Exit the loop on success
+                        
+                    except openai.error.RateLimitError:
+                        retries += 1
+                        print(f"Rate limit hit. Waiting for {wait_time} seconds...")
+                        time.sleep(wait_time)
 
-            #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
-            while(1):
-                code_blocks, error_text = extract_json_response(llm_choice, text)
+                if response:  # Only process if the response was successful
+                    text = response.choices[0].message.content  #text = response.choices[0].message['content']
+                    print(text)
 
-                if isinstance(code_blocks, bool):                
-                    print("Failure in getting code_blocks.")
-
-                    #"""
-                    # Write LLM response. Is this correct?
-                    write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
-                    # prompt_count = load_prompt_count()
-                    write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
-                    #"""
-                    update_token(0, output_token, token_path)
+                    total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
+                    print(f"Total token in {total_tokens}")
                     
+                    prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+                    input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+                    print(f"Prompt token in {prompt_used}")
 
-                    chat_history.append({"role": "system", "content": "Failure in getting correct JSON format."})
-                    #chat_history.append({"role": "user", "content": "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."})
-                    instruction = "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."
-                    chat_history.append({"role": "user", "content": instruction})
-                    write_prompt(database_dir, f"request", instruction, chat_dir, count_path)
-                    # prompt_count = load_prompt_count()
-                    write_prompt(database_dir, f"user", instruction, chat_dir, count_path)
-
-                    update_token(input_token, 0, token_path)
-
-                    #print(prompt)
-                    response = None
-                    while retries < max_retries:
-                        try:
-                            client = AzureOpenAI(
-                                api_version=given_api_version,
-                                api_key=given_api_key,
-                                azure_endpoint=given_azure_endpoint
-                            )
-                            response = client.chat.completions.create( #response = openai.ChatCompletion.create(
-                                model=gpt_model,
-                                messages=chat_history,
-                                #messages=[
-                                #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
-                                #    {"role": "user", "content": prompt}
-                                #],
-                                response_format={"type": "json_object"},
-                                temperature=given_temperature, #0, #0.7,
-                                max_tokens=output_max, #4096,
-                                #top_p=1.0,
-                                #frequency_penalty=0.5,
-                                #presence_penalty=0.5,
-                            )
-                            break  # Exit the loop on success
-                            
-                        except openai.error.RateLimitError:
-                            retries += 1
-                            print(f"Rate limit hit. Waiting for {wait_time} seconds...")
-                            time.sleep(wait_time)
-
-                    if response:  # Only process if the response was successful
-                        text = response.choices[0].message.content  #text = response.choices[0].message['content']
-                        print(text)
-
-                        total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
-                        print(f"Total token in {total_tokens}")
-                        
-                        prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-                        input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-                        print(f"Prompt token in {prompt_used}")
-
-                        completion = response.usage.completion_tokens #response['usage']['completion_tokens']
-                        output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
-                        print(f"Response token in {completion}")
-                        
-                        
-                    else:
-                        print("Failed to get a response after multiple retries.")
+                    completion = response.usage.completion_tokens #response['usage']['completion_tokens']
+                    output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
+                    print(f"Response token in {completion}")
+                    
                     
                 else:
-                    print("Secceed in gettineg a correct format.")
-                    break
-        else:
-            print("DEBUG_LLM Mode")
+                    print("Failed to get a response after multiple retries.")
+                
+            else:
+                print("Secceed in gettineg a correct format.")
+                break
 
     elif llm_choice == 'gpt_azure_databricks':
-        risky_error = 0
+        # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
+
         # https://arunprakash.ai/posts/anthropic-claude3-messages-api-json-mode/messages_api_json.html
         # Commenting out for now as this causes errors
-        if not DEBUG_LLM:
-            # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
 
-            long_count = 0
-            delay=1
-            while(1):
-                print("Asking gpt_azure_databricks...")
-                if 'repair_count' in exp_data and 'file_path' in exp_data:
-                    print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+        risky_error = 0
+        long_count = 0
+        delay=1
+        while(1):
+            print("Asking gpt_azure_databricks...")
+            if 'repair_count' in exp_data and 'file_path' in exp_data:
+                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
-                client = OpenAI(
-                    api_key=given_api_key,
-                    base_url=given_azure_endpoint
-                )
-                print("============ chat_histroty start ============")
-                #print(chat_history)
-                print("Skipping chat history")
-                print("============ chat_histroty end ============")
-                max_retries = 5
-                for attempt in range(max_retries):
-                    response_flag = False
-                    try: 
-                        message = client.chat.completions.create(
-                            model=llm_model, #given_model, #"databricks-claude-3-7-sonnet", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
-                            max_tokens=output_max, #8192, #4096, # 4096 see below
-                            #temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
-                            messages=chat_history,
-                            #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
-                        )
+            client = OpenAI(
+                api_key=given_api_key,
+                base_url=given_azure_endpoint
+            )
+            print("============ chat_histroty start ============")
+            #print(chat_history)
+            print("Skipping chat history")
+            print("============ chat_histroty end ============")
+            max_retries = 5
+            for attempt in range(max_retries):
+                response_flag = False
+                try: 
+                    message = client.chat.completions.create(
+                        model=llm_model, #given_model, #"databricks-claude-3-7-sonnet", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
+                        max_tokens=output_max, #8192, #4096, # 4096 see below
+                        #temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
+                        messages=chat_history,
+                        #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
+                    )
 
-                        response_flag = True
+                    response_flag = True
 
-                    except openai.APIStatusError as e:
-                        # https://ohina.work/post/azure_openai_error/
-                        print(f"OpenAI APIStatus Error: [{e}]")
+                except openai.APIStatusError as e:
+                    # https://ohina.work/post/azure_openai_error/
+                    print(f"OpenAI APIStatus Error: [{e}]")
 
-                        # 400: BadRequest
-                        if type(e) is openai.BadRequestError:
-                            print(f"OpenAI BadRequest Error: [{e}]")
-                            # When the token count exceeds the context window maximum
-                            if "This model's maximum context length is" in str(e):
-                                print(f"Token over [{e}]")
-                            # When blocked by the content filter
-                            # Error code: 400 - {'error': {'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more about our content filtering policies please read our documentation: https://go.microsoft.com/fwlink/?linkid=2198766", 'type': None, 'param': 'prompt', 'code': 'content_filter', 'status': 400, 'innererror': {'code': 'ResponsibleAIPolicyViolation', 'content_filter_result': {'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': True, 'severity': 'medium'}}}}}
-                            elif "The response was filtered due to the prompt triggering Azure OpenAI's content management policy." in str(e):
-                                content_filter_result = str(e).split("content_filter_result': ")[1].split("}}")[0].replace("'", '"') + "}}"
-                                content_filter_result = content_filter_result.replace("True", "true").replace("False", "false")
-                                print(f"Content filter result: [{content_filter_result}]")
-                                json_content_filter_result = json.loads(content_filter_result)
-                                for key, value in json_content_filter_result.items():
-                                    if value['filtered']:
-                                        print(f"Content filter result: [{key}] : [{value}]")
+                    # 400: BadRequest
+                    if type(e) is openai.BadRequestError:
+                        print(f"OpenAI BadRequest Error: [{e}]")
+                        # When the token count exceeds the context window maximum
+                        if "This model's maximum context length is" in str(e):
+                            print(f"Token over [{e}]")
+                        # When blocked by the content filter
+                        # Error code: 400 - {'error': {'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more about our content filtering policies please read our documentation: https://go.microsoft.com/fwlink/?linkid=2198766", 'type': None, 'param': 'prompt', 'code': 'content_filter', 'status': 400, 'innererror': {'code': 'ResponsibleAIPolicyViolation', 'content_filter_result': {'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': True, 'severity': 'medium'}}}}}
+                        elif "The response was filtered due to the prompt triggering Azure OpenAI's content management policy." in str(e):
+                            content_filter_result = str(e).split("content_filter_result': ")[1].split("}}")[0].replace("'", '"') + "}}"
+                            content_filter_result = content_filter_result.replace("True", "true").replace("False", "false")
+                            print(f"Content filter result: [{content_filter_result}]")
+                            json_content_filter_result = json.loads(content_filter_result)
+                            for key, value in json_content_filter_result.items():
+                                if value['filtered']:
+                                    print(f"Content filter result: [{key}] : [{value}]")
 
-                            else:
-                                print(f"Content filter error ?")
+                        else:
+                            print(f"Content filter error ?")
 
-                        # 401 Unauthorized. Access token is missing, invalid, audience is incorrect
-                        if type(e) is openai.AuthenticationError:
-                            print(f"OpenAI Authentication Error: [{e}]")
-                        # 403: Permission Denied
-                        elif type(e) is openai.PermissionDeniedError:
-                            print(f"OpenAI Permission Denied Error: [{e}]")
-                        # 404: Not Found
-                        elif type(e) is openai.NotFoundError:
-                            print(f"OpenAI NotFound Error: [{e}]")
-                        # 408: Operation Timeout
-                        # openai.APIStatusError: Error code: 408 - {'error': {'code': 'Timeout', 'message': 'The operation was timeout.'}}
-                        elif "The operation was timeout." in str(e):
-                            print(f"OpenAI Timeout Error: [{e}]")
-                        # 409: Conflict
-                        elif type(e) is openai.ConflictError:
-                            print(f"OpenAI Conflict Error: [{e}]")
-                        # 422: Unprocessable Entity
-                        elif type(e) is openai.UnprocessableEntityError:
-                            print(f"OpenAI Unprocessable Entity Error: [{e}]")
-                        # 429: Rate Limit
-                        elif type(e) is openai.RateLimitError:
-                            print(f"OpenAI Rate Limit Error: [{e}]")
-                            # str(e) -> Error code: 429 - {'error': {'code': '429', 'message': 'Requests to the ChatCompletions_Create Operation under Azure OpenAI API version 2024-05-01-preview have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 58 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.'}}
-                            # get wait time from error message
-                            wait_time = int(str(e).split("Please retry after ")[1].split(" seconds.")[0])
-                            print(f"Rate Limit Error: Wait time: {wait_time}")
-                        # 500: Internal Server Error
-                        elif type(e) is openai.InternalServerError:
-                            print(f"OpenAI Internal Server Error: [{e}]")
-
+                    # 401 Unauthorized. Access token is missing, invalid, audience is incorrect
+                    if type(e) is openai.AuthenticationError:
+                        print(f"OpenAI Authentication Error: [{e}]")
+                    # 403: Permission Denied
+                    elif type(e) is openai.PermissionDeniedError:
+                        print(f"OpenAI Permission Denied Error: [{e}]")
+                    # 404: Not Found
+                    elif type(e) is openai.NotFoundError:
+                        print(f"OpenAI NotFound Error: [{e}]")
+                    # 408: Operation Timeout
+                    # openai.APIStatusError: Error code: 408 - {'error': {'code': 'Timeout', 'message': 'The operation was timeout.'}}
+                    elif "The operation was timeout." in str(e):
+                        print(f"OpenAI Timeout Error: [{e}]")
+                    # 409: Conflict
+                    elif type(e) is openai.ConflictError:
+                        print(f"OpenAI Conflict Error: [{e}]")
+                    # 422: Unprocessable Entity
+                    elif type(e) is openai.UnprocessableEntityError:
+                        print(f"OpenAI Unprocessable Entity Error: [{e}]")
+                    # 429: Rate Limit
+                    elif type(e) is openai.RateLimitError:
+                        print(f"OpenAI Rate Limit Error: [{e}]")
+                        # str(e) -> Error code: 429 - {'error': {'code': '429', 'message': 'Requests to the ChatCompletions_Create Operation under Azure OpenAI API version 2024-05-01-preview have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 58 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.'}}
+                        # get wait time from error message
+                        wait_time = int(str(e).split("Please retry after ")[1].split(" seconds.")[0])
+                        print(f"Rate Limit Error: Wait time: {wait_time}")
+                    # 500: Internal Server Error
+                    elif type(e) is openai.InternalServerError:
+                        print(f"OpenAI Internal Server Error: [{e}]")
 
 
-                    except InternalServerError as e:
-                        if attempt == max_retries - 1:
-                            raise  # Re-raise the exception if max retries reached
-                        print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff: double the wait time
 
-                    if response_flag:
-                        break
-            
-                text = message.choices[0].message.content #message.content[0].text
-                print(text)
+                except InternalServerError as e:
+                    if attempt == max_retries - 1:
+                        raise  # Re-raise the exception if max retries reached
+                    print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff: double the wait time
 
-                # input_token = message.usage.input_tokens
-                # output_token = message.usage.output_tokens
-                # print(message.usage.input_tokens)
-                # print(message.usage.output_tokens)
-
-                total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
-                print(f"Total token in {total_tokens}")
-                
-                input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
-                print(f"Prompt token in {input_token}")
-
-                output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
-                print(f"Response token in {output_token}")
-        
-
-                update_token(input_token, 0, token_path)
-
-                code_blocks, error_text = extract_json_response(llm_choice, text)
-                if code_blocks is not True:
+                if response_flag:
                     break
-                else:
-                    # prompt_count = load_state()
-                    write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
-                    
-                    update_token(0, output_token, token_path)
-                    #chat_history.append({"role": "assistant", "content": "Too long response"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+        
+            text = message.choices[0].message.content #message.content[0].text
+            print(text)
 
-                    if output_token > output_max: #4000: # Already hit the limit at 4073
-                        print("Too long response")
-                        chat_history.append({"role": "assistant", "content": "Too long response"})
+            # input_token = message.usage.input_tokens
+            # output_token = message.usage.output_tokens
+            # print(message.usage.input_tokens)
+            # print(message.usage.output_tokens)
 
-                        print(f"Analyzing {long_count}")
-                        # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
-                        addition = f"""The answer exceeds {output_max} tokens in length.
+            total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
+            print(f"Total token in {total_tokens}")
+            
+            input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
+            print(f"Prompt token in {input_token}")
+
+            output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
+            print(f"Response token in {output_token}")
+    
+
+            update_token(input_token, 0, token_path)
+
+            code_blocks, error_text = extract_json_response(llm_choice, text)
+            if code_blocks is not True:
+                break
+            else:
+                write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
+                
+                update_token(0, output_token, token_path)
+                #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+
+                if output_token > output_max: #4000: # Already hit the limit at 4073
+                    print("Too long response")
+                    chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
+
+                    print(f"Analyzing {long_count}")
+                    # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
+                    addition = f"""The answer exceeds {output_max} tokens in length.
 When including code in the response, even if it's in the middle of a logical unit (function, data structure, etc.), please divide the code in the JSON key into chunks of 100 lines segments and answer the first segment now. Please make sure not to truncate the JSON data in your response.
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
 
-                        write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                        # prompt_count = load_prompt_count()
-                        write_prompt(database_dir, f"user", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"request", addition, chat_dir, count_path)
+                    # prompt_count = load_prompt_count()
+                    write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
-                        chat_history.append({"role": "user", "content": f"{addition}"})
-                        
-                        long_count += 1
+                    chat_history.append({"role": "user", "content": f"{addition}"})
+                    
+                    long_count += 1
+                else:
+                    
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+
+                    if error_text is None:
+                        print("Error in addition_error1")
+                        addition_error1 = f"The response in JSON format could not be decoded correctly. Please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
+                        chat_history.append({"role": "user", "content": f"{addition_error1}"})
+                        write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
+
                     else:
-                        print("Imappropriate response format")
-                        chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+                        if risky_error > 10:
+                            raise ValueError("Stop due to bad format.")
+                        print("Error in addition_error2")
+                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
+                        chat_history.append({"role": "user", "content": f"{addition_error2}"})
+                    
+                        write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
 
-                        if error_text is None:
-                            print("Error in addition_error1")
-                            addition_error1 = f"The response in JSON format could not be decoded correctly. Please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
-                            chat_history.append({"role": "user", "content": f"{addition_error1}"})
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
-
-                        else:
-                            if risky_error > 10:
-                                raise ValueError("Stop due to bad format.")
-                            print("Error in addition_error2")
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                            #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                            chat_history.append({"role": "user", "content": f"{addition_error2}"})
-                        
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
-
-                            risky_error += 1
+                        risky_error += 1
 
 
-    elif llm_choice == 'Gemini':
+    elif llm_choice == 'gemini':
         if 'repair_count' in exp_data:
             print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
@@ -1757,7 +1740,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 attempt += 1
     
     
-    elif llm_choice == 'Llama':
+    elif llm_choice == 'llama':
 
         # Fix this as the input causes issues
         os.environ["REPLICATE_API_TOKEN"] = llama_api_key
@@ -1804,12 +1787,12 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 if code_blocks is None:
                     error = True
                     print("Failure in getting code_blocks.")
-                    chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
                     #chat_history.append({"role": "user", "content": "The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
                     chat_history.append({"role": "user", "content": "The response in JSON format cannot be correctly JSON decoded. Please do not surround the JSON content with backticks. Please return the response in JSON format only, without including any text."})  # If Rust code is included in the response, escape characters (e.g., newlines, double quotes) must be properly escaped while maintaining the original JSON structure. 
 
             except RuntimeError as e:
-                print(f"An error occurred with the Llama model: {str(e)}")
+                print(f"An error occurred with the llama model: {str(e)}")
                 error = True
                 # Log the error
                 addition = f"""The answer exceeds {output_max} tokens in length.
@@ -1827,370 +1810,414 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
         chat_history.append({"role": "user", "content": prompt})
         chat_history.append({"role": "assistant", "content": response_output})
         
+
     elif llm_choice == 'claude':
-        risky_error = 0
+
         # https://arunprakash.ai/posts/anthropic-claude3-messages-api-json-mode/messages_api_json.html
         # Commenting out for now as this causes errors
-        if not DEBUG_LLM:
 
-            long_count = 0
-            delay=1
-            while(1):
-                print("Asking Claude Anthropic...")
-                if 'repair_count' in exp_data and 'file_path' in exp_data:
-                    print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
-                client = anthropic.Anthropic(
-                    api_key = given_api_key,
-                )
-                print("============ chat_histroty start ============")
-                #print(chat_history)
-                print("Skipping chat history")
-                print("============ chat_histroty end ============")
-                max_retries = 5
-                for attempt in range(max_retries):
-                    response_flag = False
-                    try: 
-                        with client.messages.stream(
-                            model=llm_model,
-                            max_tokens=output_max, #32000,
-                            temperature=given_temperature,
-                            #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                            system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                            messages=chat_history,
-                        ) as stream:
-                            message = stream.get_final_message()
-                        
-                        """
-                        message = client.messages.create(
-                            model=llm_model, #"claude-sonnet-4-20250514", #  "claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
-                            max_tokens=32000, #8192, #4096, # 4096 see below
-                            temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
-                            #system="You are an assistant that responds only in JSON format. Responses must strictly follow the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).", #system="You are an assistant that responds only in JSON format. Responses should always be returned in JSON format with values in the specified keys. If the value for a key contains code, escape it appropriately.", # Prompt (optional) # Responses should always be in the format {\"specified_key\": \"enter response here\"}.
-                            system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                            messages=chat_history,
-                            extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
-                            #messages=[
-                            #    {"role": "user", "content": prompt},
-                            #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
-                            #]
-                        )
-                        """
+        risky_error = 0
+        long_count = 0
+        delay = 1
 
-                        response_flag = True
-                    except InternalServerError as e:
-                        if attempt == max_retries - 1:
-                            raise  # Re-raise the exception if max retries reached
-                        print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff: double the wait time
+        while(1):
+            print("Asking Claude Anthropic...")
+            if 'repair_count' in exp_data and 'file_path' in exp_data:
+                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+            client = anthropic.Anthropic(
+                api_key = given_api_key,
+            )
+            print("============ chat_histroty start ============")
+            # print(chat_history)
+            print("Skipping chat history")
+            print("============ chat_histroty end ============")
+            max_retries = 100
+            for attempt in range(max_retries):
+                response_flag = False
+                try: 
+                    with client.messages.stream(
+                        model=llm_model,
+                        max_tokens=output_max, #32000,
+                        temperature=given_temperature,
+                        #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                        system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                        messages=chat_history,
+                    ) as stream:
+                        message = stream.get_final_message()
 
-                    if response_flag:
-                        break
-            
-                text = message.content[0].text
-                print(text)
+                    response_flag = True
 
-                input_token = message.usage.input_tokens
-                output_token = message.usage.output_tokens
-                print(message.usage.input_tokens)
-                print(message.usage.output_tokens)
+                except anthropic.APIStatusError as e:
+                    # https://github.com/anthropics/anthropic-sdk-python
+                    print(f"Anthropic APIStatus Error: [{e}]")
 
-                update_token(input_token, 0, token_path)
+                    # 400: BadRequest
+                    if type(e) is anthropic.BadRequestError:
+                        print(f"Anthropic BadRequest Error: [{e}]")
+                        # When the token count exceeds the context window maximum
+                        if "prompt is too long" in str(e) or "maximum context length" in str(e):
+                            print(f"Token over [{e}]")
+                        # When blocked by Anthropic's content policy
+                        # Anthropic typically signals this via 'invalid_request_error' or a refusal message
+                        elif "content policy" in str(e).lower() or "refused" in str(e).lower():
+                            print(f"Content policy violation: [{e}]")
+                        else:
+                            print(f"Other BadRequest error: [{e}]")
 
-                code_blocks, error_text = extract_json_response(llm_choice, text)
-                if code_blocks is not True:
-                    break
-                else:
-                    # prompt_count = load_state()
-                    write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
+                    # 401: Unauthorized
+                    elif type(e) is anthropic.AuthenticationError:
+                        print(f"Anthropic Authentication Error: [{e}]")
+                    # 403: Permission Denied
+                    elif type(e) is anthropic.PermissionDeniedError:
+                        print(f"Anthropic Permission Denied Error: [{e}]")
+                    # 404: Not Found
+                    elif type(e) is anthropic.NotFoundError:
+                        print(f"Anthropic NotFound Error: [{e}]")
+                    # 408: Timeout (Anthropic SDK has no dedicated subclass here, fallback to string match)
+                    elif "timeout" in str(e).lower() or "timed out" in str(e).lower():
+                        print(f"Anthropic Timeout Error: [{e}]")
+                    # 409: Conflict
+                    elif type(e) is anthropic.ConflictError:
+                        print(f"Anthropic Conflict Error: [{e}]")
+                    # 422: Unprocessable Entity
+                    elif type(e) is anthropic.UnprocessableEntityError:
+                        print(f"Anthropic Unprocessable Entity Error: [{e}]")
                     
-                    update_token(0, output_token, token_path)
-                    #chat_history.append({"role": "assistant", "content": "Too long response"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+                    # 429: Rate Limit
+                    elif type(e) is anthropic.RateLimitError:
+                        print(f"Anthropic Rate Limit Error: [{e}]")
+                        # Anthropic RateLimitError may carry a retry-after header
+                        # Fall back to a fixed wait when the header is unavailable
+                        wait_time = 60
+                        # Try to extract the wait time from the response headers
+                        if hasattr(e, 'response') and e.response is not None:
+                            retry_after = e.response.headers.get('retry-after')
+                            if retry_after:
+                                try:
+                                    wait_time = int(retry_after) + 5
+                                except ValueError:
+                                    pass
+                        print(f"** Anthropic Rate Limit: Waiting {wait_time} seconds...")
+                        time.sleep(wait_time)
+                        continue  # Continue the retry loop
 
-                    if output_token > output_max: #30000: #4000: # Already hit the limit at 4073
-                        print("Too long response")
-                        chat_history.append({"role": "assistant", "content": "Too long response"})
+                    # 500: Internal Server Error (also caught below, logged here for parity)
+                    elif type(e) is anthropic.InternalServerError:
+                        print(f"Anthropic Internal Server Error: [{e}]")
+                        if attempt == max_retries - 1:
+                            raise
+                        print(f"Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                        time.sleep(delay)
+                        delay *= 2  # Exponential backoff
+                        continue
+                        
+                except anthropic.APIConnectionError as e:
+                    # Network-level error
+                    print(f"Anthropic API Connection Error: [{e}]")
+                    if attempt == max_retries - 1:
+                        raise
+                    print(f"Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2
 
-                        print(f"Analyzing {long_count}")
-                        # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
-                        addition = f"""The answer exceeds {output_max} tokens in length.
+                except InternalServerError as e:
+                    if attempt == max_retries - 1:
+                        raise  # Re-raise the exception if max retries reached
+                    print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff: double the wait time
+
+                if response_flag:
+                    break
+
+            if not response_flag:
+                raise ValueError(f"API request failed after {max_retries} retries")
+
+            text = message.content[0].text
+            input_token = message.usage.input_tokens
+            output_token = message.usage.output_tokens
+
+            #print(text)
+            print(message.usage.input_tokens)
+            print(message.usage.output_tokens)
+
+            update_token(input_token, 0, token_path)
+
+            code_blocks, error_text = extract_json_response(llm_choice, text)
+            if code_blocks is not True:
+                break
+            else:
+
+                write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)     
+                update_token(0, output_token, token_path)
+
+                if output_token > output_max: #30000: #4000: # Already hit the limit at 4073
+                    chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) # chat_history.append({"role": "assistant", "content": "Too long response"})
+
+                    print(f"Analyzing {long_count}")
+                    # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
+                    addition = f"""The answer exceeds {output_max} tokens in length.
 When including code in the response, even if it's in the middle of a logical unit (function, data structure, etc.), please divide the code in the JSON key into chunks of 100 lines segments and answer the first segment now. Please make sure not to truncate the JSON data in your response.
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
-                        # When splitting, set the value of the 'parsable' key in the JSON response to false.
-                        #print(prompt)
-                        # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
-                        # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
-                        # Make sure it is {output_max} tokens or less and respond again.
-                        # When splitting midway, enter the boolean value False for the 'parsable' key value.
-                        # Return only JSON format data without including any text.
+                    # When splitting, set the value of the 'parsable' key in the JSON response to false.
+                    # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
+                    # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
+                    # Make sure it is {output_max} tokens or less and respond again.
+                    # When splitting midway, enter the boolean value False for the 'parsable' key value.
+                    # Return only JSON format data without including any text.
 
-                        write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                        # prompt_count = load_prompt_count()
-                        write_prompt(database_dir, f"user", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"request", addition, chat_dir, count_path)
+                    # prompt_count = load_prompt_count()
+                    write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
-                        chat_history.append({"role": "user", "content": f"{addition}"})
-                        #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                        
-                        long_count += 1
+                    chat_history.append({"role": "user", "content": f"{addition}"})
+                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+                    
+                    long_count += 1
+                else:
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   # chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+
+                    if error_text is None:
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
+                        #addition_error = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        #addition_error = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
+
                     else:
-                        print("Imappropriate response format")
-                        chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+                        if risky_error > 10:
+                            raise ValueError("Stop due to bad format.")
 
-                        if error_text is None:
-                            print("Error in addition_error1")
-                            #addition_error1 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error1 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
-                            #addition_error1 = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
-                            chat_history.append({"role": "user", "content": f"{addition_error1}"})
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
+                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        #addition_error = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        #addition_error = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
+                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
+                    
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
 
-                        else:
-                            if risky_error > 10:
-                                raise ValueError("Stop due to bad format.")
-                            print("Error in addition_error2")
-                            #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
-                            #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                            chat_history.append({"role": "user", "content": f"{addition_error2}"})
-                        
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
+                        risky_error += 1
 
-                            risky_error += 1
-    
     elif llm_choice == 'claude_azure':
-        risky_error = 0
+        
+        # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
         # https://arunprakash.ai/posts/anthropic-claude3-messages-api-json-mode/messages_api_json.html
         # Commenting out for now as this causes errors
-        if not DEBUG_LLM:
 
-            # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
-            long_count = 0
-            delay=1
-            while(1):
-                print("Asking Azure Claude Anthropic...")
-                if exp_data is not None and 'repair_count' in exp_data and 'file_path' in exp_data:
-                    print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+        risky_error = 0 
+        long_count = 0
+        delay = 1
 
-                ####
-                """
-                host = given_azure_endpoint
-                client_id = client_id
-                client_secret = given_api_key
+        while(1):
+            print("Asking Azure Claude Anthropic...")
+            if exp_data is not None and 'repair_count' in exp_data and 'file_path' in exp_data:
+                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
-                host_url = host.replace("/serving-endpoints", "")
-                wc = WorkspaceClient(
-                    host=host_url,
-                    client_id=client_id,
-                    client_secret=client_secret
-                )
+            #############################
+            ## For service point usage
+            #############################
+            """
+            host = given_azure_endpoint
+            client_id = client_id
+            client_secret = given_api_key
 
-                token = wc.config.authenticate()["Authorization"].replace("Bearer ", "")
+            host_url = host.replace("/serving-endpoints", "")
+            wc = WorkspaceClient(
+                host=host_url,
+                client_id=client_id,
+                client_secret=client_secret
+            )
 
-                client = OpenAI(
-                    api_key=token,
-                    base_url=f"{host}"
-                )
-                """
-                ####
+            token = wc.config.authenticate()["Authorization"].replace("Bearer ", "")
 
-                client = OpenAI(
-                    api_key=given_api_key,
-                    base_url=given_azure_endpoint 
-                )
-                
+            client = OpenAI(
+                api_key=token,
+                base_url=f"{host}"
+            )
+            """
+            #############################
 
-                print("============ chat_histroty start ============")
-                #print(chat_history)
-                print("Skipping chat history")
-                print("============ chat_histroty end ============")
-                max_retries = 100 #5
+            client = OpenAI(
+                api_key=given_api_key,
+                base_url=given_azure_endpoint 
+            )
             
-                for attempt in range(max_retries):
-                    response_flag = False
-                    try: 
-                        message = client.chat.completions.create(
-                            model=llm_model, #"databricks-claude-sonnet-4", #"databricks-claude-3-7-sonnet", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
-                            max_tokens=output_max, #8192, #4096, 
-                            temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
-                            #system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                            messages=chat_history,
-                            #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
-                            #messages=[
-                            #    {"role": "user", "content": prompt},
-                            #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
-                            #]
-                        )
-
-                        response_flag = True
-
-                    except openai.APIStatusError as e:
-                        # https://ohina.work/post/azure_openai_error/
-                        print(f"OpenAI APIStatus Error: [{e}]")
-
-                        # 400: BadRequest
-                        if type(e) is openai.BadRequestError:
-                            print(f"OpenAI BadRequest Error: [{e}]")
-                            # When the token count exceeds the context window maximum
-                            if "This model's maximum context length is" in str(e):
-                                print(f"Token over [{e}]")
-                            # When blocked by the content filter
-                            # Error code: 400 - {'error': {'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more about our content filtering policies please read our documentation: https://go.microsoft.com/fwlink/?linkid=2198766", 'type': None, 'param': 'prompt', 'code': 'content_filter', 'status': 400, 'innererror': {'code': 'ResponsibleAIPolicyViolation', 'content_filter_result': {'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': True, 'severity': 'medium'}}}}}
-                            elif "The response was filtered due to the prompt triggering Azure OpenAI's content management policy." in str(e):
-                                content_filter_result = str(e).split("content_filter_result': ")[1].split("}}")[0].replace("'", '"') + "}}"
-                                content_filter_result = content_filter_result.replace("True", "true").replace("False", "false")
-                                print(f"Content filter result: [{content_filter_result}]")
-                                json_content_filter_result = json.loads(content_filter_result)
-                                for key, value in json_content_filter_result.items():
-                                    if value['filtered']:
-                                        print(f"Content filter result: [{key}] : [{value}]")
-
-                            else:
-                                print(f"Content filter error ?")
-
-                        # 401 Unauthorized. Access token is missing, invalid, audience is incorrect
-                        if type(e) is openai.AuthenticationError:
-                            print(f"OpenAI Authentication Error: [{e}]")
-                        # 403: Permission Denied
-                        elif type(e) is openai.PermissionDeniedError:
-                            print(f"OpenAI Permission Denied Error: [{e}]")
-                        # 404: Not Found
-                        elif type(e) is openai.NotFoundError:
-                            print(f"OpenAI NotFound Error: [{e}]")
-                        # 408: Operation Timeout
-                        # openai.APIStatusError: Error code: 408 - {'error': {'code': 'Timeout', 'message': 'The operation was timeout.'}}
-                        elif "The operation was timeout." in str(e):
-                            print(f"OpenAI Timeout Error: [{e}]")
-                        # 409: Conflict
-                        elif type(e) is openai.ConflictError:
-                            print(f"OpenAI Conflict Error: [{e}]")
-                        # 422: Unprocessable Entity
-                        elif type(e) is openai.UnprocessableEntityError:
-                            print(f"OpenAI Unprocessable Entity Error: [{e}]")
-                        # 429: Rate Limit
-                        elif type(e) is openai.RateLimitError:
-                            print(f"OpenAI Rate Limit Error: [{e}]")
-                            # str(e) -> Error code: 429 - {'error': {'code': '429', 'message': 'Requests to the ChatCompletions_Create Operation under Azure OpenAI API version 2024-05-01-preview have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 58 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.'}}
-                            # get wait time from error message
-                            # wait_time = int(str(e).split("Please retry after ")[1].split(" seconds.")[0])
-                            # print(f"Rate Limit Error: Wait time: {wait_time}")
-
-                            if "REQUEST_LIMIT_EXCEEDED" in str(e):
-                                wait_time = 80 #65  # Wait 60 seconds since it's a per-minute limit
-                                print(f"** Databricks Rate Limit: Waiting {wait_time} seconds...")
-                                time.sleep(wait_time)
-                                continue  # Continue the retry loop
-                                
-                        # 500: Internal Server Error
-                        elif type(e) is openai.InternalServerError:
-                            print(f"OpenAI Internal Server Error: [{e}]")
-
-
-
-                    except InternalServerError as e:
-                        if attempt == max_retries - 1:
-                            raise  # Re-raise the exception if max retries reached
-                        print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff: double the wait time
-
-                    if response_flag:
-                        break
-                
-                if not response_flag:
-                    raise ValueError(f"API request failed after {max_retries} retries")
-            
-                text = message.choices[0].message.content #message.content[0].text
-                print(text)
-
-                # input_token = message.usage.input_tokens
-                # output_token = message.usage.output_tokens
-                # print(message.usage.input_tokens)
-                # print(message.usage.output_tokens)
-
-                total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
-                print(f"Total token in {total_tokens}")
-                
-                input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
-                print(f"Prompt token in {input_token}")
-
-                output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
-                print(f"Response token in {output_token}")
+            print("============ chat_histroty start ============")
+            #print(chat_history)
+            print("Skipping chat history")
+            print("============ chat_histroty end ============")
+            max_retries = 100 #5
         
+            for attempt in range(max_retries):
+                response_flag = False
+                try: 
+                    message = client.chat.completions.create(
+                        model=llm_model, #"databricks-claude-sonnet-4", #"databricks-claude-3-7-sonnet", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
+                        max_tokens=output_max, #8192, #4096, 
+                        temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
+                        #system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                        messages=chat_history,
+                        #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
+                        #messages=[
+                        #    {"role": "user", "content": prompt},
+                        #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
+                        #]
+                    )
+                    response_flag = True
 
-                update_token(input_token, 0, token_path)
+                except openai.APIStatusError as e:
+                    # https://ohina.work/post/azure_openai_error/
+                    print(f"OpenAI APIStatus Error: [{e}]")
 
-                code_blocks, error_text = extract_json_response(llm_choice, text)
-                if code_blocks is not True:
+                    # 400: BadRequest
+                    if type(e) is openai.BadRequestError:
+                        print(f"OpenAI BadRequest Error: [{e}]")
+                        # When the token count exceeds the context window maximum
+                        if "This model's maximum context length is" in str(e):
+                            print(f"Token over [{e}]")
+                        # When blocked by the content filter
+                        # Error code: 400 - {'error': {'message': "The response was filtered due to the prompt triggering Azure OpenAI's content management policy. Please modify your prompt and retry. To learn more about our content filtering policies please read our documentation: https://go.microsoft.com/fwlink/?linkid=2198766", 'type': None, 'param': 'prompt', 'code': 'content_filter', 'status': 400, 'innererror': {'code': 'ResponsibleAIPolicyViolation', 'content_filter_result': {'hate': {'filtered': False, 'severity': 'safe'}, 'self_harm': {'filtered': False, 'severity': 'safe'}, 'sexual': {'filtered': False, 'severity': 'safe'}, 'violence': {'filtered': True, 'severity': 'medium'}}}}}
+                        elif "The response was filtered due to the prompt triggering Azure OpenAI's content management policy." in str(e):
+                            content_filter_result = str(e).split("content_filter_result': ")[1].split("}}")[0].replace("'", '"') + "}}"
+                            content_filter_result = content_filter_result.replace("True", "true").replace("False", "false")
+                            print(f"Content filter result: [{content_filter_result}]")
+                            json_content_filter_result = json.loads(content_filter_result)
+                            for key, value in json_content_filter_result.items():
+                                if value['filtered']:
+                                    print(f"Content filter result: [{key}] : [{value}]")
+
+                        else:
+                            print(f"Content filter error ?")
+
+                    # 401 Unauthorized. Access token is missing, invalid, audience is incorrect
+                    if type(e) is openai.AuthenticationError:
+                        print(f"OpenAI Authentication Error: [{e}]")
+                    # 403: Permission Denied
+                    elif type(e) is openai.PermissionDeniedError:
+                        print(f"OpenAI Permission Denied Error: [{e}]")
+                    # 404: Not Found
+                    elif type(e) is openai.NotFoundError:
+                        print(f"OpenAI NotFound Error: [{e}]")
+                    # 408: Operation Timeout
+                    # openai.APIStatusError: Error code: 408 - {'error': {'code': 'Timeout', 'message': 'The operation was timeout.'}}
+                    elif "The operation was timeout." in str(e):
+                        print(f"OpenAI Timeout Error: [{e}]")
+                    # 409: Conflict
+                    elif type(e) is openai.ConflictError:
+                        print(f"OpenAI Conflict Error: [{e}]")
+                    # 422: Unprocessable Entity
+                    elif type(e) is openai.UnprocessableEntityError:
+                        print(f"OpenAI Unprocessable Entity Error: [{e}]")
+                    # 429: Rate Limit
+                    elif type(e) is openai.RateLimitError:
+                        print(f"OpenAI Rate Limit Error: [{e}]")
+                        # str(e) -> Error code: 429 - {'error': {'code': '429', 'message': 'Requests to the ChatCompletions_Create Operation under Azure OpenAI API version 2024-05-01-preview have exceeded token rate limit of your current OpenAI S0 pricing tier. Please retry after 58 seconds. Please go here: https://aka.ms/oai/quotaincrease if you would like to further increase the default rate limit.'}}
+                        # get wait time from error message
+                        # wait_time = int(str(e).split("Please retry after ")[1].split(" seconds.")[0])
+                        # print(f"Rate Limit Error: Wait time: {wait_time}")
+
+                        if "REQUEST_LIMIT_EXCEEDED" in str(e):
+                            wait_time = 80 #65  # Wait 60 seconds since it's a per-minute limit
+                            print(f"** Databricks Rate Limit: Waiting {wait_time} seconds...")
+                            time.sleep(wait_time)
+                            continue  # Continue the retry loop
+                            
+                    # 500: Internal Server Error
+                    elif type(e) is openai.InternalServerError:
+                        print(f"OpenAI Internal Server Error: [{e}]")
+
+                except InternalServerError as e:
+                    if attempt == max_retries - 1:
+                        raise  # Re-raise the exception if max retries reached
+                    print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff: double the wait time
+
+                if response_flag:
                     break
-                else:
-                    # prompt_count = load_state()
-                    write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
-                    
-                    update_token(0, output_token, token_path)
-                    #chat_history.append({"role": "assistant", "content": "Too long response"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+            
+            if not response_flag:
+                raise ValueError(f"API request failed after {max_retries} retries")
+        
+            text = message.choices[0].message.content #message.content[0].text
+            # input_token = message.usage.input_tokens
+            # output_token = message.usage.output_tokens
+            # print(message.usage.input_tokens)
+            # print(message.usage.output_tokens)
 
-                    if output_token > output_max: #4000: # Already hit the limit at 4073
-                        print("Too long response")
-                        chat_history.append({"role": "assistant", "content": "Too long response"})
+            total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
+            input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
+            output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
 
-                        # print(f"Analyzing {long_count}")
-                        # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
-                        addition = f"""The answer exceeds {output_max} tokens in length.
+            print(text)
+            print(f"Total token in {total_tokens}")
+            print(f"Prompt token in {input_token}")
+            print(f"Response token in {output_token}")
+
+            update_token(input_token, 0, token_path)
+
+            code_blocks, error_text = extract_json_response(llm_choice, text)
+            if code_blocks is not True:
+                break
+            else:
+                write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
+                update_token(0, output_token, token_path)
+
+                #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+
+                if output_token > output_max: #4000: # Already hit the limit at 4073
+                    chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
+
+                    # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
+                    addition = f"""The answer exceeds {output_max} tokens in length.
 When including code in the response, even if it's in the middle of a logical unit (function, data structure, etc.), please divide the code in the JSON key into chunks of 100 lines segments and answer the first segment now. Please make sure not to truncate the JSON data in your response.
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
-                        # When splitting, set the value of the 'parsable' key in the JSON response to false.
-                        #print(prompt)
-                        # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
-                        # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
-                        # Make sure it is {output_max} tokens or less and respond again.
-                        # When splitting midway, enter the boolean value False for the 'parsable' key value.
-                        # Return only JSON format data without including any text.
+                    # When splitting, set the value of the 'parsable' key in the JSON response to false.
+                    #print(prompt)
+                    # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
+                    # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
+                    # Make sure it is {output_max} tokens or less and respond again.
+                    # When splitting midway, enter the boolean value False for the 'parsable' key value.
+                    # Return only JSON format data without including any text.
 
-                        write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                        # prompt_count = load_prompt_count()
-                        write_prompt(database_dir, f"user", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"request", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
-                        chat_history.append({"role": "user", "content": f"{addition}"})
-                        #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                        
-                        long_count += 1
+                    chat_history.append({"role": "user", "content": f"{addition}"})
+                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+                    
+                    long_count += 1
+                
+                else:
+                    
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+
+                    if error_text is None:
+
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
+
                     else:
-                        print("Imappropriate response format")
-                        chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
-
-                        if error_text is None:
-                            print("Error in addition_error1")
-                            addition_error1 = f"The response in JSON format could not be decoded correctly. Please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
-                            chat_history.append({"role": "user", "content": f"{addition_error1}"})
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
-
-                        else:
-                            if risky_error > 10:
-                                raise ValueError("Stop due to bad format.")
-                            print("Error in addition_error2")
-                            #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                            #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                            chat_history.append({"role": "user", "content": f"{addition_error2}"})
+                        if risky_error > 10:
+                            raise ValueError("Stop due to bad format.")
                         
-                            # prompt_count = load_state()
-                            write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
+                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
+                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
+                    
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
 
-                            risky_error += 1
+                        risky_error += 1
     
     elif llm_choice == 'claude_bedrock':
         risky_error = 0
@@ -2260,7 +2287,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 if code_blocks is not True:
                     break
                 else:
-                    # prompt_count = load_state()
                     write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
                     
                     update_token(0, output_token, token_path)
@@ -2269,7 +2295,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
                     if output_token > output_max: #4000: # Already hit the limit at 4073
                         print("Too long response")
-                        chat_history.append({"role": "assistant", "content": "Too long response"})
+                        chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
 
                         print(f"Analyzing {long_count}")
                         # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
@@ -2286,16 +2312,15 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                         # Return only JSON format data without including any text.
 
                         write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                        # prompt_count = load_prompt_count()
                         write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
                         chat_history.append({"role": "user", "content": f"{addition}"})
                         #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
                         
                         long_count += 1
+
                     else:
-                        print("Imappropriate response format")
-                        chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
+                        chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
                         #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
                         #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
 
@@ -2305,7 +2330,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                             addition_error1 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
                             #addition_error1 = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
                             chat_history.append({"role": "user", "content": f"{addition_error1}"})
-                            # prompt_count = load_state()
                             write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
 
                         else:
@@ -2319,7 +2343,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                             #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
                             chat_history.append({"role": "user", "content": f"{addition_error2}"})
                         
-                            # prompt_count = load_state()
                             write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
 
                             risky_error += 1
@@ -2329,7 +2352,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
         if llm_choice in ['gpt', 'gpt_azure', 'gpt_azure_databricks', 'claude', 'claude_azure', 'claude_bedrock']:
             chat_history.append({"role": "assistant", "content": text})
         
-        elif llm_choice == 'Gemini':
+        elif llm_choice == 'gemini':
             reverse_gemini_history(gemini_history)
         
         write_json(history_path, chat_history)
@@ -2339,7 +2362,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
     #ask_count += 1
 
     write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
-    # prompt_count = load_prompt_count()
     write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
     
     update_token(0, output_token, token_path)
