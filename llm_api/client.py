@@ -325,6 +325,7 @@ class SemConfig:
     cov_target : str
     log_dir: str
     max_iterations: int
+    flow_on: bool
     #api_key: str
 
     # Optional fields
