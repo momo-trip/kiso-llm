@@ -96,14 +96,12 @@ from utils_api import (
     # translation
     # obtain_metadata
     get_lined_code,
-    get_specific_lined_code,
     get_unit_code,
     get_unit_code_with_location,
 )
 
 
 TESTFILE_COUNTER = 0
-
 
 @dataclass
 class LLMInterface:
@@ -1515,7 +1513,8 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
 
         risky_error = 0
         long_count = 0
-        delay=1
+        delay = 1
+        
         while(1):
             print("Asking gpt_azure_databricks...")
             if 'repair_count' in exp_data and 'file_path' in exp_data:
@@ -1910,7 +1909,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                         time.sleep(delay)
                         delay *= 2  # Exponential backoff
                         continue
-                        
+
                 except anthropic.APIConnectionError as e:
                     # Network-level error
                     print(f"Anthropic API Connection Error: [{e}]")
@@ -2223,129 +2222,130 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
         risky_error = 0
         # https://arunprakash.ai/posts/anthropic-claude3-messages-api-json-mode/messages_api_json.html
         # Commenting out for now as this causes errors
-        if not DEBUG_LLM:
-            # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
-            long_count = 0
-            delay=1
-            while(1):
-                print("Asking Bedrock Claude Anthropic...")
-                if 'repair_count' in exp_data and 'file_path' in exp_data:
-                    print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
-                client = AnthropicBedrock(
-                    # api_key=given_api_key,
-                    # base_url=given_azure_endpoint
-                    aws_access_key=given_api_key,
-                    aws_secret_key=given_azure_endpoint,
-                    aws_region=given_region, #"us-west-2",
-                )
-                print("============ chat_histroty start ============")
-                #print(chat_history)
-                print("Skipping chat history")
-                print("============ chat_histroty end ============")
-                max_retries = 5
-                for attempt in range(max_retries):
-                    response_flag = False
-                    try: 
-                        message = client.messages.create( #client.chat.completions.create(
-                            model=llm_model, #"us.anthropic.claude-3-7-sonnet-20250219-v1:0", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
-                            max_tokens=output_max, #8192, #4096, # 4096 see below
-                            temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
-                            #system="You are an assistant that responds only in JSON format. Responses must strictly follow the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).", #system="You are an assistant that responds only in JSON format. Responses should always be returned in JSON format with values in the specified keys. If the value for a key contains code, escape it appropriately.", # Prompt (optional) # Responses should always be in the format {\"specified_key\": \"enter response here\"}.
-                            #system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                            messages=chat_history,
-                            #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
-                            #messages=[
-                            #    {"role": "user", "content": prompt},
-                            #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
-                            #]
-                        )
+        # How to get your Databricks token: https://docs.databricks.com/en/dev-tools/auth/pat.html
+        long_count = 0
+        delay = 1
 
-                        response_flag = True
+        while(1):
+            print("Asking Bedrock Claude Anthropic...")
+            if 'repair_count' in exp_data and 'file_path' in exp_data:
+                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
-                    except InternalServerError as e:
-                        if attempt == max_retries - 1:
-                            raise  # Re-raise the exception if max retries reached
-                        print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
-                        time.sleep(delay)
-                        delay *= 2  # Exponential backoff: double the wait time
+            client = AnthropicBedrock(
+                # api_key=given_api_key,
+                # base_url=given_azure_endpoint
+                aws_access_key=given_api_key,
+                aws_secret_key=given_azure_endpoint,
+                aws_region=given_region, #"us-west-2",
+            )
+            print("============ chat_histroty start ============")
+            #print(chat_history)
+            print("Skipping chat history")
+            print("============ chat_histroty end ============")
+            max_retries = 5
+            for attempt in range(max_retries):
+                response_flag = False
+                try: 
+                    message = client.messages.create( #client.chat.completions.create(
+                        model=llm_model, #"us.anthropic.claude-3-7-sonnet-20250219-v1:0", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
+                        max_tokens=output_max, #8192, #4096, # 4096 see below
+                        temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
+                        #system="You are an assistant that responds only in JSON format. Responses must strictly follow the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).", #system="You are an assistant that responds only in JSON format. Responses should always be returned in JSON format with values in the specified keys. If the value for a key contains code, escape it appropriately.", # Prompt (optional) # Responses should always be in the format {\"specified_key\": \"enter response here\"}.
+                        #system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                        messages=chat_history,
+                        #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
+                        #messages=[
+                        #    {"role": "user", "content": prompt},
+                        #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
+                        #]
+                    )
 
-                    if response_flag:
-                        break
-            
-                text = message.content[0].text
-                print(text)
+                    response_flag = True
 
-                input_token = message.usage.input_tokens
-                output_token = message.usage.output_tokens
-                print(message.usage.input_tokens)
-                print(message.usage.output_tokens)
+                except InternalServerError as e:
+                    if attempt == max_retries - 1:
+                        raise  # Re-raise the exception if max retries reached
+                    print(f"InternalServerError occurred. Retrying in {delay} seconds... (Attempt {attempt + 1}/{max_retries})")
+                    time.sleep(delay)
+                    delay *= 2  # Exponential backoff: double the wait time
 
-                update_token(input_token, 0, token_path)
-
-                code_blocks, error_text = extract_json_response(llm_choice, text)
-                if code_blocks is not True:
+                if response_flag:
                     break
-                else:
-                    write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
-                    
-                    update_token(0, output_token, token_path)
-                    #chat_history.append({"role": "assistant", "content": "Too long response"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+        
+            text = message.content[0].text
+            print(text)
 
-                    if output_token > output_max: #4000: # Already hit the limit at 4073
-                        print("Too long response")
-                        chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
+            input_token = message.usage.input_tokens
+            output_token = message.usage.output_tokens
+            print(message.usage.input_tokens)
+            print(message.usage.output_tokens)
 
-                        print(f"Analyzing {long_count}")
-                        # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
-                        addition = f"""The answer exceeds {output_max} tokens in length.
+            update_token(input_token, 0, token_path)
+
+            code_blocks, error_text = extract_json_response(llm_choice, text)
+            if code_blocks is not True:
+                break
+            else:
+                write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
+                
+                update_token(0, output_token, token_path)
+                #chat_history.append({"role": "assistant", "content": "Too long response"})
+                #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+
+                if output_token > output_max: #4000: # Already hit the limit at 4073
+                    print("Too long response")
+                    chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
+
+                    print(f"Analyzing {long_count}")
+                    # 20 lines (or more) didn't work here. Interesting! Haven't tested the range between 10-20 lines though.
+                    addition = f"""The answer exceeds {output_max} tokens in length.
 When including code in the response, even if it's in the middle of a logical unit (function, data structure, etc.), please divide the code in the JSON key into chunks of 100 lines segments and answer the first segment now. Please make sure not to truncate the JSON data in your response.
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
-                        # When splitting, set the value of the 'parsable' key in the JSON response to false.
-                        #print(prompt)
-                        # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
-                        # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
-                        # Make sure it is {output_max} tokens or less and respond again.
-                        # When splitting midway, enter the boolean value False for the 'parsable' key value.
-                        # Return only JSON format data without including any text.
+                    # When splitting, set the value of the 'parsable' key in the JSON response to false.
+                    #print(prompt)
+                    # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
+                    # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
+                    # Make sure it is {output_max} tokens or less and respond again.
+                    # When splitting midway, enter the boolean value False for the 'parsable' key value.
+                    # Return only JSON format data without including any text.
 
-                        write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                        write_prompt(database_dir, f"user", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"request", addition, chat_dir, count_path)
+                    write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
-                        chat_history.append({"role": "user", "content": f"{addition}"})
-                        #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                        
-                        long_count += 1
+                    chat_history.append({"role": "user", "content": f"{addition}"})
+                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
+                    
+                    long_count += 1
+
+                else:
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+
+                    if error_text is None:
+                        print("Error in addition_error1")
+                        #addition_error1 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        addition_error1 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
+                        #addition_error1 = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
+                        chat_history.append({"role": "user", "content": f"{addition_error1}"})
+                        write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
 
                     else:
-                        chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+                        if risky_error > 10:
+                            raise ValueError("Stop due to bad format.")
+                        print("Error in addition_error2")
+                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
+                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
+                        addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        #addition_error2 = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
+                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
+                        chat_history.append({"role": "user", "content": f"{addition_error2}"})
+                    
+                        write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
 
-                        if error_text is None:
-                            print("Error in addition_error1")
-                            #addition_error1 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error1 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
-                            #addition_error1 = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
-                            chat_history.append({"role": "user", "content": f"{addition_error1}"})
-                            write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
-
-                        else:
-                            if risky_error > 10:
-                                raise ValueError("Stop due to bad format.")
-                            print("Error in addition_error2")
-                            #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                            addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                            #addition_error2 = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
-                            #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                            chat_history.append({"role": "user", "content": f"{addition_error2}"})
-                        
-                            write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
-
-                            risky_error += 1
+                        risky_error += 1
 
 
     if memory_type is not None:
@@ -2357,9 +2357,8 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
         
         write_json(history_path, chat_history)
 
-    #global ask_count
     # write_exp_data(exp_data, input_token, output_token)
-    #ask_count += 1
+    # ask_count += 1
 
     write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
     write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
@@ -2744,35 +2743,30 @@ def delete_lines(file_path, start_line, end_line):
         print(f"Error processing file '{file_path}'.")
 
 
-def insert_modified_data(mod): #current_code_length
-
+def insert_modified_data(mod):
     last_count = count_file_lines(mod['file_path'])
 
     if mod['current_code_found'] == True:
         #print("current_code_found is True in insert_modified_data()")
-        part_03_code = read_specific_lines(mod['file_path'], mod['current_end_line'] + 1, last_count) # mod['start_line'] + current_code_length
+        part_code = read_specific_lines(mod['file_path'], mod['current_end_line'] + 1, last_count) # mod['start_line'] + current_code_length
 
     else:
         #print("current_code_found is False in insert_modified_data()")
-        part_03_code = read_specific_lines(mod['file_path'], mod['start_line'], last_count)
+        part_code = read_specific_lines(mod['file_path'], mod['start_line'], last_count)
 
-    #print(last_count)
     delete_lines(mod['file_path'], mod['start_line'], last_count)
 
-    #sprint(last_count)
-    #print(part_03_code)
     append_file(mod['file_path'], '\n')
     append_file(mod['file_path'], mod['modified_data'])
 
     append_file(mod['file_path'], '\n')
-    append_file(mod['file_path'], part_03_code)
+    append_file(mod['file_path'], part_code)
 
 
-def reflect_line_modification(modifications, work_dir):
+def reflect_line_modification(modifications, work_dir, database_dir):
     if not isinstance(modifications, list):  # If modifications is not a list, convert it to a list
         modifications = [modifications]
 
-    ## added
     new_modifications = []
     for item in modifications:
         if 'file_path' not in item:
@@ -2785,8 +2779,6 @@ def reflect_line_modification(modifications, work_dir):
         new_modifications.append(item)
     modifications = new_modifications
 
-    ## added
-
     # Handle the shorthand case where end_line = -1
     for item in modifications:
         end_line = item['end_line']
@@ -2796,7 +2788,6 @@ def reflect_line_modification(modifications, work_dir):
             # write_file(item['file_path'], item['modified_data'])
             # print(f"Created a new file or modified the entire file: {item}")
 
-            # if item.get('is_JSON', False):
             if item.get('is_JSON', False) or isinstance(item['modified_data'], (dict, list)):
                 write_file(item['file_path'], json.dumps(item['modified_data'], indent=4, ensure_ascii=False))
             else:
@@ -2816,10 +2807,8 @@ def reflect_line_modification(modifications, work_dir):
             item['current_end_line'] = item['end_line']
             item['current_code_found'] = True
         
-    # global reflect_count
     reflect_timestamp = get_timestamp()
     # write_json(f'look_modifs/look_modifs{str(reflect_timestamp)}.json', modifications)
-    # reflect_count = reflect_count + 1
 
     # Group modifications by file
     file_modifications = {}
@@ -2829,7 +2818,7 @@ def reflect_line_modification(modifications, work_dir):
         file_modifications[mod['file_path']].append(mod)
 
     # Apply modifications to each file
-    interval_path = 'interval_mod.txt'
+    interval_path = f'{database_dir}/interval_mod.txt'
     for test_path, mods in file_modifications.items():
 
         mods.sort(key=lambda x: x['start_line'], reverse=True)  # Sort modifications in descending order of line number (to apply them from the end)
@@ -2955,21 +2944,6 @@ def add_line_numbers_custom(input_file, fixed_number):
     except IOError as e:
         print(f"An error occurred: {e}")
 
-
-def get_lined_specific_code(work_dir, database_dir, test_path, start_line, end_line):
-    if not os.path.exists(test_path):
-        test_path = find_matching_path(work_dir, test_path)
-
-    target_code = read_specific_lines(test_path, start_line, end_line)
-    
-    lined_test_path = f"{database_dir}/lined.txt" #"lined.c"
-    write_file(lined_test_path, target_code)
-    add_line_numbers_custom(lined_test_path, int(start_line)) #add_line_numbers(lined_test_path)
-    test_code = read_file(lined_test_path)
-
-    delete_file(lined_test_path)
-
-    return test_code
 
 
 def get_prompt_count(token_path):
@@ -3615,15 +3589,15 @@ def get_remaining_list(tmp_json_data, sum_modified_list, database_dir):
     return remain_list
 
 
+def ask_correspondence(repair_target, interface): 
 
-def ask_correspondence(repair_target, interface): # repair_target, target_dir, entry, original_run_path, original_execute_path, meta_dir, dep_json_path, exp_data, repair_count # div_start_line, 
-
-    ask_count = 1
-
+    ################################################
+    ##### Setup
+    ################################################
+    
     modified_lines = interface.modified_lines
     key_json = interface.key_json
     tmp_json_data = key_json #interface.tmp_json_data
-    
     
     build_path = interface.build_path
     rust_build_path = interface.rust_build_path
@@ -3730,7 +3704,13 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
         build_path = interface.build_path
         #macro_type = interface.macro_type
 
-    # start iteration
+    
+
+    ################################################
+    ##### Iteration start
+    ################################################
+
+    ask_count = 1
     mode = None
     execute_error = None
     execute_out = None
@@ -4439,6 +4419,8 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
 
             
         ################################################
+        ##### LLM interaction
+        ################################################
 
         prompt = adjust_prompt(prompt)
         print("-------------------------")
@@ -4465,6 +4447,9 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
 
 
         ################################################
+        ##### Response analysis
+        ################################################
+
         #ongoing_flag = False
         ongoing_in_mode_flag = False
 
@@ -4657,8 +4642,7 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
                 if item['file_path'] != answer_path:
                     item['file_path'] = answer_path # added
 
-            part_editied_files = reflect_line_modification(sum_modified_list, work_dir)
-            #part_editied_files = reflect_line_modification(sum_modified_list, rust_output_dir) # execute_error =  #sum_modified_list.extend(added_list) #if MOD_LINE:
+            part_editied_files = reflect_line_modification(sum_modified_list, work_dir, database_dir)
             editied_files.extend(part_editied_files)
 
             #if not reflect_success:
@@ -4682,7 +4666,7 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
                 read_prompt.extend([f'{file_code}\n'])
 
             for see_item in sum_slice_list:
-                file_code = get_lined_specific_code(work_dir, database_dir, see_item['file_path'], see_item['start_line'], see_item['end_line'])
+                file_code = get_lined_specific_code(database_dir, see_item['file_path'], see_item['start_line'], see_item['end_line'], work_dir)
                 if len(file_code) == 0:
                     file_code = f"Line 1 [0]: [This {see_item['file_path']} file is currently empty and contains no content. *** STOP *** Do not use read_data mode anymore.]"
                 read_prompt.extend([f"- Content of {see_item['start_line']} - {see_item['end_line']} lines in the file {see_item['file_path']}:"])
@@ -4691,11 +4675,6 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
                 read_prompt.extend([f'{file_code}\n'])
 
 
-            #rsp_json = ask_llm(prompt, "continue", interface)
-
-            #print(rsp_json)
-            print("End of rsp_json")
-        
         elif mode == 'execute_command':
             print(f"In mode: {mode}")
             execute_error, execute_out, repair_count = run_script(execute_path, 50, True, None, "both", None, repair_count, None, None, mode)
@@ -4704,7 +4683,7 @@ def ask_correspondence(repair_target, interface): # repair_target, target_dir, e
         #modified_file_list.extend(sum_modified_list)
 
     # Putting this on hold for now
-    #check_dif(target_dir)
+    # check_dif(target_dir)
 
     iteration_dict[rust_path] = repair_count
 
@@ -4730,10 +4709,12 @@ def get_claude_model(llm_choice):
         #claude_model = 'databricks-claude-sonnet-4-5'
         #claude_model = 'databricks-claude-opus-4-5'
         claude_model = 'databricks-claude-opus-4-6'
+        #claude_model = 'databricks-claude-opus-4-7'
 
     elif llm_choice == "claude":
         #claude_model = 'claude-sonnet-4-5-20250929'
         claude_model = 'claude-opus-4-6'
+        #claude_model = 'claude-opus-4-7'
 
     return claude_model
 
