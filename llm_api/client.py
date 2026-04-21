@@ -40,7 +40,6 @@ import tempfile
 import mimetypes
 from databricks.sdk import WorkspaceClient
 
-#
 import anthropic
 from anthropic import AnthropicBedrock, InternalServerError
 import chardet
@@ -691,7 +690,7 @@ def deduplicate_sections(data):
         "## Response rules",
         "## Response modes",
         "## Execution error",
-        "## Response to the previous request",
+        #"## Response to the previous request",
         "## Read data result",
         #"## Code in workspace",
         "## Code in",
@@ -1835,15 +1834,25 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    with client.messages.stream(
-                        model=llm_model,
-                        max_tokens=output_max, #32000,
-                        temperature=given_temperature,
-                        #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                        system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                        messages=chat_history,
-                    ) as stream:
-                        message = stream.get_final_message()
+                    if llm_model == "claude-opus-4-7":
+                        with client.messages.stream(
+                            model=llm_model,
+                            max_tokens=output_max, #32000,
+                            #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            messages=chat_history,
+                        ) as stream:
+                            message = stream.get_final_message()
+                    else:
+                        with client.messages.stream(
+                            model=llm_model,
+                            max_tokens=output_max, #32000,
+                            temperature=given_temperature,
+                            #system="You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            system="You are an assistant that responds in JSON format. Wrap your JSON response in ```json ... ``` markdown code blocks. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
+                            messages=chat_history,
+                        ) as stream:
+                            message = stream.get_final_message()
 
                     response_flag = True
 
@@ -4708,8 +4717,8 @@ def get_claude_model(llm_choice):
 
     elif llm_choice == "claude":
         #claude_model = 'claude-sonnet-4-5-20250929'
-        claude_model = 'claude-opus-4-6'
-        #claude_model = 'claude-opus-4-7'
+        #claude_model = 'claude-opus-4-6'
+        claude_model = 'claude-opus-4-7'
 
     return claude_model
 
