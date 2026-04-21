@@ -2631,18 +2631,12 @@ def trim_data(work_dir, target_path, file_code, given_limit):
 
 def get_dir_struct(app_type, target_dir, original_target_dir):  # , original_dir=None
     print(f"Getting directory structure: {target_dir}")
-    
-    # grant_permissions(target_dir) # off at this moment
-
-    print("---------------")
-    print(target_dir)
-    print(original_target_dir)
-
+    # print(target_dir)
+    # print(original_target_dir)
     parent_path = None
     if original_target_dir is not None:
         parent_path = os.path.dirname(original_target_dir)
-    print(parent_path)
-    print("---------------")
+    # print(parent_path)
 
     # List of directories to exclude
     # excluded_dirs = ['build', '.github', '.gitlab', '.tx', '.git', 'fuzz', 'test']  # ['target']
