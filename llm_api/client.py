@@ -1211,7 +1211,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     if isinstance(memory_type, str) and memory_type == "init":
         chat_history = []
         # Add system message
-        if llm_choice in ['claude_azure']: # ['claude', 
+        if llm_choice in ['claude_azure']:
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
@@ -1229,7 +1229,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         chat_history = []
         
     if len(chat_history) == 0:
-        if llm_choice in ['claude_azure']: # ['claude', 
+        if llm_choice in ['claude_azure']:
             chat_history.append({
                 "role": "system",
                 "content": "Always wrap your JSON response in ```json ... ``` markdown code blocks."
@@ -1843,6 +1843,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                             messages=chat_history,
                         ) as stream:
                             message = stream.get_final_message()
+                    
                     else:
                         with client.messages.stream(
                             model=llm_model,
@@ -1853,7 +1854,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                             messages=chat_history,
                         ) as stream:
                             message = stream.get_final_message()
-
+                        
                     response_flag = True
 
                 except anthropic.APIStatusError as e:
@@ -2029,8 +2030,9 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             #############################
             ## For service point usage
             #############################
+            
             """
-            host = given_azure_endpoint
+            host = given_azure_endpoint #given_azure_endpoint
             client_id = client_id
             client_secret = given_api_key
 
@@ -2048,12 +2050,14 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 base_url=f"{host}"
             )
             """
-            #############################
 
+            #############################
+            #"""
             client = OpenAI(
                 api_key=given_api_key,
                 base_url=given_azure_endpoint 
             )
+            #"""
             
             print("============ chat_histroty start ============")
             #print(chat_history)
@@ -2064,18 +2068,20 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    message = client.chat.completions.create(
-                        model=llm_model, #"databricks-claude-sonnet-4", #"databricks-claude-3-7-sonnet", #"claude-3-7-sonnet-20250219", #"claude-3-5-sonnet-20241022", #"claude-3-5-sonnet-20240620", #claude_model, # Model: claude-3-opus-20240229, claude-3-sonnet-20240229, claude-3-haiku-20240307
-                        max_tokens=output_max, #8192, #4096, 
-                        temperature=given_temperature, #0, # Higher values make it more chaotic # You are a helpful assistant that returns JSON as a response.
-                        #system= "You are an assistant that responds only in JSON format. Adhere strictly to the JSON format, and when inserting code into the specified key values, include the code as a string. Also, properly escape characters that require escaping (e.g., newlines, double quotes).",
-                        messages=chat_history,
-                        #extra_headers = {"anthropic-beta": "max-tokens-3-5-sonnet-2024-07-15"},
-                        #messages=[
-                        #    {"role": "user", "content": prompt},
-                        #    #{"role":"assistant", "content": "Here is the JSON requested:\n{"}
-                        #]
-                    )
+                    if llm_model == "databricks-claude-opus-4-7":
+                        message = client.chat.completions.create(
+                            model=llm_model,
+                            max_tokens=output_max,
+                            messages=chat_history,
+                        )
+                    else:
+                        message = client.chat.completions.create(
+                            model=llm_model,
+                            max_tokens=output_max,
+                            temperature=given_temperature,
+                            messages=chat_history,
+                        )
+
                     response_flag = True
 
                 except openai.APIStatusError as e:
@@ -4678,7 +4684,7 @@ def ask_correspondence(repair_target, interface):
         #modified_file_list.extend(sum_modified_list)
 
     # Putting this on hold for now
-    
+
     iteration_dict[rust_path] = repair_count
 
     if repair_target == "build" or repair_target == "compile":
