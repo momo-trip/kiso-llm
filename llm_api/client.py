@@ -4625,16 +4625,7 @@ def ask_correspondence(repair_target, interface):
             prompt.extend(["", "## Remaining items:"])
             prompt.extend([remaining_data])
 
-            rsp_json = ask_llm(prompt, "continue", llm_interface) #code_blocks = extract_code_blocks(response)
-
-        
-        # tmp_data = read_json(tmp_rust_path)
-        # remaining_list = get_remaining_list(tmp_data, sum_modified_list)
-
-        # remaining_path = "remaining.json"
-        # write_json(remaining_path, remaining_list)
-        # remaining_data = read_file(remaining_path)
-    
+            rsp_json = ask_llm(prompt, "continue", llm_interface)
 
         ######################## Proceed file by file ########################
 
@@ -4687,8 +4678,7 @@ def ask_correspondence(repair_target, interface):
         #modified_file_list.extend(sum_modified_list)
 
     # Putting this on hold for now
-    # check_dif(target_dir)
-
+    
     iteration_dict[rust_path] = repair_count
 
     if repair_target == "build" or repair_target == "compile":
@@ -4712,8 +4702,8 @@ def get_claude_model(llm_choice):
         # claude_model = 'databricks-claude-sonnet-4'
         #claude_model = 'databricks-claude-sonnet-4-5'
         #claude_model = 'databricks-claude-opus-4-5'
-        claude_model = 'databricks-claude-opus-4-6'
-        #claude_model = 'databricks-claude-opus-4-7'
+        #claude_model = 'databricks-claude-opus-4-6'
+        claude_model = 'databricks-claude-opus-4-7'
 
     elif llm_choice == "claude":
         #claude_model = 'claude-sonnet-4-5-20250929'
