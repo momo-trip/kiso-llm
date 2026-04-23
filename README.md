@@ -11,7 +11,7 @@ A Python library that provides a unified interface for calling LLM providers. De
 
 **Note:**
 - While the codebase may include implementations for GPT, Gemini, and Llama for comparison purposes, these providers have not been continuously tested or maintained and may not work as expected. Only Claude-based providers (claude, claude_azure) are actively maintained and will continue to be updated alongside new model releases.
-- The default model is currently `claude-opus-4-6` (Claude Opus 4.6).
+- The default model is currently `claude-opus-4-7` (Claude Opus 4.7).
 
 
 ## Setup
