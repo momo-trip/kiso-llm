@@ -1114,15 +1114,15 @@ def extract_json_response(llm_choice, response_text):
             print(response_json)
             raise ValueError("response_json is unparsable")
 
-        print("----------------------------- error_path -----------------------------")
+        print("------------- error_path -------------")
         print(response_json['error_path'])
 
     # else:
     #     print("Neither expected key (e.g., 'rust_code' nor 'toml') found in the response")
-    print(f"------------------------ Response start ------------------------")
-    print(f"Skipeed, because maybe too long.")
+    print(f"------------- Response start -------------")
+    print(f"Skipped, because maybe too long.")
     # print(f"{response_json}")
-    print(f"------------------------ Response end ---------------------------")  
+    print(f"---------- Response end ----------")  
 
     return response_json, error_text  # code_blocks
 
@@ -1196,9 +1196,9 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     prompt = clean_prompt(prompt)
     prompt = create_prompt_string(prompt) #"\n".join(prompt)
 
-    print(f"------------------------ Prompt ------------------------")
+    print(f"-------------------- Prompt --------------------")
     print(f"{prompt}")
-    print(f"--------------------------------------------------------")
+    print(f"------------------------------------------------")
     write_prompt(database_dir, f"request", prompt, chat_dir, count_path)
     write_prompt(database_dir, f"user", prompt, chat_dir, count_path)
 
@@ -1777,9 +1777,9 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     output = f"{event}"
                     response_output += output
                 
-                print("--------------------- response_output for llama ---------------------")
+                print("---------------- response_output for llama ----------------")
                 print(response_output)
-                print("--------------------- response_output end for llama ---------------------")
+                print("---------------- response_output end for llama ----------------")
 
                 code_blocks = extract_braces_json(response_output)
 
@@ -2030,7 +2030,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             #############################
             ## For service point usage
             #############################
-            
+
             """
             host = given_azure_endpoint #given_azure_endpoint
             client_id = client_id
