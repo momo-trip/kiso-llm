@@ -3746,7 +3746,7 @@ def ask_correspondence(repair_target, interface):
         if mode != "read_data":
             if (repair_count != 1 and repair_target == "build") or repair_target == "compile": #if (repair_count != 1 and (repair_target == "build" or repair_target == "compile")): # This shouldn't be repair_count != 1, right?
                 error, std_out, repair_count = run_script(run_path, 50, True, None, "both", None, repair_count, None, None, mode)
-                print(f"Judging at run_script: error: {error}")
+                # print(f"Judging at run_script: error: {error}")
 
         # exp_data['repair_count'] = repair_count
         # exp_data['phase'] = 'repair'
@@ -3758,7 +3758,7 @@ def ask_correspondence(repair_target, interface):
             if repair_count != 1 and mode != "read_data" and ongoing_flag is False:
                 break
 
-        print(f"Judging at {repair_count}: mode: {mode}, ongoing_flag: {ongoing_flag}, error: {error}")
+        # print(f"Judging at {repair_count}: mode: {mode}, ongoing_flag: {ongoing_flag}, error: {error}")
         if error is None and mode != "read_data" and ongoing_flag is False:
             break
 
@@ -4635,9 +4635,9 @@ def ask_correspondence(repair_target, interface):
 
         ######################## Proceed file by file ########################
 
-        print(f"Running program for the mode: {mode}")
+        # print(f"Running program for the mode: {mode}")
         if mode == 'modify_data':
-            print(f"In mode: {mode}")
+            # print(f"In mode: {mode}")
             # Not including modifications for the same start_line, end_line. For example, in the case of split responses with start_line = 1, end_line = 600, start_line and end_line remain the same throughout.
             for item in sum_modified_list:
                 if item['file_path'] != answer_path:
@@ -4650,7 +4650,7 @@ def ask_correspondence(repair_target, interface):
             #    return repair_count, error
         
         elif mode == 'read_data':
-            print(f"In mode: {mode}")
+            # print(f"In mode: {mode}")
             #output = run_read_script(execute_path, 50, True, None, "both")
             read_prompt = ["The content obtained in read_data mode is as follows.", ""] # Even if there was a previous response with the 'ongoing' flag set to true, this response must include None in the "answer" key of the JSON data as shown below.
                       # If the 'ongoing' flag is true, continue the response after returning None once.]
@@ -4677,7 +4677,7 @@ def ask_correspondence(repair_target, interface):
 
 
         elif mode == 'execute_command':
-            print(f"In mode: {mode}")
+            # print(f"In mode: {mode}")
             execute_error, execute_out, repair_count = run_script(execute_path, 50, True, None, "both", None, repair_count, None, None, mode)
             
         repair_count += 1
