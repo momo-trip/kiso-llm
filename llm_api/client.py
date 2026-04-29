@@ -691,7 +691,7 @@ def deduplicate_sections(data):
         "## Response modes",
         "## Execution error",
         #"## Response to the previous request",
-        "## Read data result",
+        #"## Read data result",
         #"## Code in workspace",
         "## Code in",
         "## The original C source code",
