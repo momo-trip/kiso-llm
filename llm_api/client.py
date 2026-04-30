@@ -162,7 +162,7 @@ class TransConfig:
     cov_target : str
     log_dir: str
     max_iterations: int
-    #api_key: str
+    target: str
 
     # Optional fields
     is_program_path: str = None
