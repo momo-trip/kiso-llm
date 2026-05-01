@@ -93,7 +93,6 @@ from utils_api import (
     run_script_pty,
 
     # translation
-    # obtain_metadata
     get_lined_code,
     get_unit_code,
     get_unit_code_with_location,
@@ -112,7 +111,6 @@ class LLMInterface:
     llm_model: str
     temperature: float = 0.7
     timeout: int = 300
-    # system_prompt: Optional[str] = None
 
     # Set paths
     azure_endpoint: Optional[str] = None
@@ -123,9 +121,8 @@ class LLMInterface:
     count_path: Optional[str] = None
     
     # Others
-    # verbose: bool = False
     exp_data: Dict[str, Any] = None
-    output_max: int = None #4000. # 128000
+    output_max: int = None
     context_window: int = None 
     client_id: int = None 
 
@@ -137,7 +134,6 @@ class TransConfig:
     c_rust_path: str
     raw_dir: str
     rust_output_dir: str
-    #llm_choice: str
     llm_interface: LLMInterface
     target_dir: str
     chat_dir: str
@@ -163,6 +159,7 @@ class TransConfig:
     log_dir: str
     max_iterations: int
     target: str
+    user_id: str
 
     # Optional fields
     is_program_path: str = None
@@ -217,7 +214,6 @@ class CorConfig:
     key_json: Dict[str, Any]
     raw_dir: str
     rust_output_dir: str
-    #llm_choice: str
     llm_interface: LLMInterface
     target_dir: str
     chat_dir: str
@@ -229,7 +225,7 @@ class CorConfig:
     run_test_path: str
     build_path: str
     rust_build_path: str
-    run_all_path: str  #run_path: str
+    run_all_path: str
     meta_dir: str
     div_meta_dir: str
     dep_json_path: str
@@ -243,7 +239,6 @@ class CorConfig:
     log_dir: str
     max_iterations: int
     repair_max: int
-    #api_key: str
 
     # Optional fields
     label: str = None
@@ -325,7 +320,6 @@ class SemConfig:
     log_dir: str
     max_iterations: int
     flow_on: bool
-    #api_key: str
 
     # Optional fields
     rust_path: str = None # We do not need this at the initial build moment
@@ -360,7 +354,6 @@ class SemConfig:
     target_cmd: str = None
     cmd_list: List[str] = None
     cmd_exe: str = None
-
 
     # LLM-related
     model: str = None
@@ -812,12 +805,10 @@ def trim_json_data(llm_choice, llm_model, data, max_tokens): # "gpt-3.5-turbo"
         test_data = trimmed_data.copy()
         test_data.append(item)
         test_tokens = calculate_tokens(test_data, encoder) + system_tokens
-        #print(f"test_tokens: {test_tokens}")
 
         if test_tokens <= max_tokens:
             trimmed_data.append(item)
             total_tokens = calculate_tokens(trimmed_data, encoder)
-            #print(total_tokens)
         else:
             break
 
@@ -831,10 +822,6 @@ def trim_json_data(llm_choice, llm_model, data, max_tokens): # "gpt-3.5-turbo"
     # Add system messages back to the beginning
     trimmed_data = system_messages + trimmed_data
 
-    # Write results to a new JSON file
-    #write_json(file_path, trimmed_data)
-
-    #print(f"Processed file saved as: {output_file}")
     final_tokens = calculate_tokens(trimmed_data, encoder)
     if final_tokens != current_total_tokens:
         print(f"Total tokens after trimming: {final_tokens}")
@@ -938,7 +925,7 @@ def shutdown_llm(instance: LLMInterface):
             if os.path.exists(token_path):
                 cost = calc_claude_cost_from_file(token_path)
                 print(f"Cost: ${cost['total_cost_usd']:.2f}")
-        #item['program'] = None
+
         found = True
         break
 
@@ -1014,17 +1001,7 @@ def extract_json_response(llm_choice, response_text):
                 response_json = json.loads(response_text)
 
             elif llm_choice in ['claude', 'claude_azure', 'claude_bedrock']:
-                # response_json = json.loads("{" + response_text[:response_text.rfind("}") + 1], strict=False)
                 response_json = json.loads(response_text, strict=False)
-                # response_json = json.loads("{" + response_text[:response_text.rfind("}") + 1])
-                # if 'answer' in response_json and isinstance(response_json["answer"], list) and len(response_json["answer"]) > 0:
-                #     if 'modified_data' in response_json["answer"][0]:
-                #         try:
-                #             modified_data_content = json.loads(response_json["answer"][0]["modified_data"])
-                #         except json.JSONDecodeError as e:
-                #                 print(f"Failed to decode modified_data JSON: {str(e)}")
-                #                 decode_failure = True
-                #                 return decode_failure
 
         except json.JSONDecodeError as e:
             print("Failed to decode JSON")
@@ -1064,15 +1041,11 @@ def extract_json_response(llm_choice, response_text):
 
     # Store JSON fields into a list
     if 'rust_code' in response_json:
-        # decoded_rust_code = base64.b64decode(response_json['rust_code']).decode('utf-8')
-        # response_json['rust_code'] = decoded_rust_code
         decoded_rust_code = response_json['rust_code']
             
         # Add padding (if necessary)
         padding = '=' * (-len(decoded_rust_code) % 4)
         decoded_rust_code = decoded_rust_code + padding
-        
-        # decoded_rust_code = base64.b64decode(decoded_rust_code).decode('utf-8')
         
         # Update JSON with decoded code
         # response_json['rust_code'] = decoded_rust_code
@@ -1164,8 +1137,6 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     temperature = llm_interface.temperature
     llm_model = llm_interface.llm_model
     client_id = llm_interface.client_id
-    #llm_interface = config.llm_interface
-
     api_key = llm_interface.api_key
 
     given_model = llm_interface.llm_model
@@ -1174,8 +1145,6 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     given_temperature = llm_interface.temperature
 
     timeout = llm_interface.timeout
-
-    #system_prompt = llm_interface.system_prompt
     history_path = llm_interface.history_path
     token_path = llm_interface.token_path
     database_dir = llm_interface.database_dir
@@ -1386,8 +1355,8 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                     api_key=given_api_key,
                     azure_endpoint=given_azure_endpoint 
                 )
-                response = client.chat.completions.create( #response = openai.ChatCompletion.create(
-                    model=llm_model, #gpt_model,
+                response = client.chat.completions.create(
+                    model=llm_model,
                     messages=chat_history,
                     #messages=[
                     #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
@@ -1427,18 +1396,16 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         else:
             print("Failed to get a response after multiple retries.")
 
-        #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
         while(1):
             code_blocks, error_text = extract_json_response(llm_choice, text)
 
             if isinstance(code_blocks, bool):                
                 print("Failure in getting code_blocks.")
 
-                #"""
                 # Write LLM response. Is this correct?
                 write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
                 write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
-                #"""
+
                 update_token(0, output_token, token_path)
                 
 
@@ -2592,12 +2559,7 @@ def trim_code(target_path, file_code, given_limit, model="gpt-4"):
 
 # Revision proposal
 def trim_data(work_dir, target_path, file_code, given_limit):
-    # given_limit = 8000 #10000
-    model = "gpt-4"
-
-    # # Handle the case where file_code is None or is not a string
-    # if file_code is None:
-    #     return
+    model = "gpt-4" # given_limit = 8000 #10000
 
     write_file(target_path, file_code)
     
@@ -2850,22 +2812,14 @@ def reflect_line_modification(modifications, work_dir, database_dir):
 
             offset = 0
             start_line = mod['start_line'] - 1  # 0-indexed
-            # print(f"Fixing line: {mod['start_line']} in {mod['file_path']}")
-            # if 'current_code' not in mod:  # This is causing the problem. Remove this for now.
-                # return False  # Remove this for now
             
             if not ('current_code_found' in mod and mod['current_code_found'] == True):
                 mod['current_code_found'] = False
-                # print("Not found current_code")
-                # print(f"{mod['modified_data']}")
-                # continue
 
                 if 'modified_data' in mod:  # To avoid errors here
                     write_file(interval_path, mod['modified_data'])
-                    insert_modified_data(mod)  # , current_code_length
+                    insert_modified_data(mod)
             else:
-                # print("Found current_code")
-
                 current_code = read_specific_lines(mod['file_path'], mod['start_line'], mod['current_end_line'])
                 write_file(interval_path, current_code)
                 current_code_length = count_file_lines(interval_path)
@@ -2875,7 +2829,7 @@ def reflect_line_modification(modifications, work_dir, database_dir):
                     write_file(interval_path, mod['modified_data'])
                     modified_data_length = count_file_lines(interval_path)
                     # print(f"start_line {mod['start_line']}, modified_data_length: {modified_data_length}, current_code_length: {current_code_length}")
-                    insert_modified_data(mod)  # , current_code_length
+                    insert_modified_data(mod) 
 
         # Update block information for the modified file
         # update_c_block(c_path, test_path, meta_dir)
@@ -3607,7 +3561,7 @@ def ask_correspondence(repair_target, interface):
     
     modified_lines = interface.modified_lines
     key_json = interface.key_json
-    tmp_json_data = key_json #interface.tmp_json_data
+    tmp_json_data = key_json
     
     build_path = interface.build_path
     rust_build_path = interface.rust_build_path
@@ -3641,7 +3595,7 @@ def ask_correspondence(repair_target, interface):
     if not os.path.exists(run_path):
         create_file(run_path)
 
-    execute_path = f"{work_dir}/execute.sh" #get_execute_path(run_path) #interface.execute_path']
+    execute_path = f"{work_dir}/execute.sh"
     if not os.path.exists(execute_path):
         create_file(execute_path)
     else:
@@ -3663,11 +3617,11 @@ def ask_correspondence(repair_target, interface):
         dep_json_path = interface.dep_json_path
         exp_data = interface.exp_data
         rust_path = interface.rust_path
-        lib_path = interface.lib_path #f"{rust_output_dir}/src/lib.rs" #interface.lib_path']
+        lib_path = interface.lib_path
         
 
     elif repair_target == "ask_generates":
-        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path  
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -3683,7 +3637,7 @@ def ask_correspondence(repair_target, interface):
     elif repair_target == "ask_correspondence" or repair_target == "ask_unimplemented":
         c_path = interface.c_path
         meta_dir = interface.meta_dir
-        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path 
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -3691,7 +3645,7 @@ def ask_correspondence(repair_target, interface):
         #modified_files = interface.modified_files
 
     elif repair_target == "judge_conds":
-        answer_path = interface.answer_path  #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path 
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -3703,7 +3657,7 @@ def ask_correspondence(repair_target, interface):
         #macro_type = interface.macro_type']
 
     elif repair_target == "judge_macros":
-        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path  
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -4635,30 +4589,17 @@ def ask_correspondence(repair_target, interface):
 
         ######################## Proceed file by file ########################
 
-        # print(f"Running program for the mode: {mode}")
         if mode == 'modify_data':
-            # print(f"In mode: {mode}")
-            # Not including modifications for the same start_line, end_line. For example, in the case of split responses with start_line = 1, end_line = 600, start_line and end_line remain the same throughout.
             for item in sum_modified_list:
                 if item['file_path'] != answer_path:
-                    item['file_path'] = answer_path # added
+                    item['file_path'] = answer_path
 
             part_editied_files = reflect_line_modification(sum_modified_list, work_dir, database_dir)
             editied_files.extend(part_editied_files)
-
-            #if not reflect_success:
-            #    return repair_count, error
         
         elif mode == 'read_data':
-            # print(f"In mode: {mode}")
-            #output = run_read_script(execute_path, 50, True, None, "both")
             read_prompt = ["The content obtained in read_data mode is as follows.", ""] # Even if there was a previous response with the 'ongoing' flag set to true, this response must include None in the "answer" key of the JSON data as shown below.
-                      # If the 'ongoing' flag is true, continue the response after returning None once.]
-            #prompt.extend([none_format])
 
-                        #"Command execution result: ",
-                        #f"{output}", ""]
-            
             for see_path in sum_target_list:
                 file_code = get_lined_code(see_path, work_dir)
                 read_prompt.extend([f"- Content of the file {see_path}:"])
@@ -4677,13 +4618,9 @@ def ask_correspondence(repair_target, interface):
 
 
         elif mode == 'execute_command':
-            # print(f"In mode: {mode}")
             execute_error, execute_out, repair_count = run_script(execute_path, 50, True, None, "both", None, repair_count, None, None, mode)
             
         repair_count += 1
-        #modified_file_list.extend(sum_modified_list)
-
-    # Putting this on hold for now
 
     iteration_dict[rust_path] = repair_count
 
@@ -4692,7 +4629,7 @@ def ask_correspondence(repair_target, interface):
         for edite_file in editied_files:
             if edite_file not in seen_files:
                 seen_files.add(edite_file)
-        #return editied_files
+
         return list(seen_files)
     
     elif repair_target == "ask_generates" or repair_target == "ask_correspondence":
