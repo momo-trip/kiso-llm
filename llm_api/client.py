@@ -34,7 +34,6 @@ import time
 import traceback
 import webbrowser
 from queue import Queue
-from typing import Optional
 import chardet
 import tempfile
 import mimetypes
@@ -63,7 +62,19 @@ from pydantic import BaseModel
 import replicate
 import requests
 import tiktoken
+import asyncio
+import httpx
 
+from claude_agent_sdk import (
+    query,
+    ClaudeAgentOptions,
+    AssistantMessage,
+    UserMessage,
+    ResultMessage,
+    TextBlock,
+    ToolUseBlock,
+    ToolResultBlock,
+)
 
 from utils_api import (
     # normal
@@ -94,6 +105,7 @@ from utils_api import (
 
     # translation
     get_lined_code,
+    get_lined_specific_code,
     get_unit_code,
     get_unit_code_with_location,
 )
@@ -107,10 +119,12 @@ class LLMInterface:
     occupy_path: str
     llm_choice: str
     api_key: str
-    full_regions: Dict[str, Any]
+    #full_regions: Dict[str, Any]
     llm_model: str
     temperature: float = 0.7
     timeout: int = 300
+    AGENT: bool = False
+    # system_prompt: Optional[str] = None
 
     # Set paths
     azure_endpoint: Optional[str] = None
@@ -121,11 +135,10 @@ class LLMInterface:
     count_path: Optional[str] = None
     
     # Others
-    exp_data: Dict[str, Any] = None
-    output_max: int = None
+    # verbose: bool = False
+    output_max: int = None #4000. # 128000
     context_window: int = None 
     client_id: int = None 
-
 
 
 @dataclass
@@ -134,6 +147,7 @@ class TransConfig:
     c_rust_path: str
     raw_dir: str
     rust_output_dir: str
+    #llm_choice: str
     llm_interface: LLMInterface
     target_dir: str
     chat_dir: str
@@ -149,7 +163,6 @@ class TransConfig:
     div_meta_dir: str
     meta_dir: str
     dep_json_path: str
-    exp_data: Dict[str, Any]
     repair_count: int
     rust_edition: str
     execute_path: str
@@ -196,7 +209,6 @@ class TransConfig:
     cmd_list: List[str] = None
     cmd_exe: str = None
 
-
     # LLM-related
     model: str = None
     max_tokens: int = 4000
@@ -214,6 +226,7 @@ class CorConfig:
     key_json: Dict[str, Any]
     raw_dir: str
     rust_output_dir: str
+    #llm_choice: str
     llm_interface: LLMInterface
     target_dir: str
     chat_dir: str
@@ -225,11 +238,10 @@ class CorConfig:
     run_test_path: str
     build_path: str
     rust_build_path: str
-    run_all_path: str
+    run_all_path: str  #run_path: str
     meta_dir: str
     div_meta_dir: str
     dep_json_path: str
-    exp_data: Dict[str, Any]
     repair_count: int
     rust_edition: str
     execute_path: str
@@ -239,6 +251,7 @@ class CorConfig:
     log_dir: str
     max_iterations: int
     repair_max: int
+    #api_key: str
 
     # Optional fields
     label: str = None
@@ -311,7 +324,6 @@ class SemConfig:
     original_target_dir: str
     meta_dir: str
     dep_json_path: str
-    exp_data: Dict[str, Any]
     repair_count: int
     execute_path: str
     explore_time: float
@@ -320,6 +332,7 @@ class SemConfig:
     log_dir: str
     max_iterations: int
     flow_on: bool
+    #api_key: str
 
     # Optional fields
     rust_path: str = None # We do not need this at the initial build moment
@@ -354,6 +367,7 @@ class SemConfig:
     target_cmd: str = None
     cmd_list: List[str] = None
     cmd_exe: str = None
+
 
     # LLM-related
     model: str = None
@@ -501,11 +515,8 @@ def read_specific_lines(filename, start_line, end_line):
 
 
 def write_time(time_path, activity, action, repair_target, timestamp=None):
+
     formatted_time = None
-    # if timestamp is not None:
-    #     # formatted_time = datetime.datetime.fromtimestamp(timestamp).strftime('%Y-%m-%d %H:%M:%S.%f')
-    #     datetime_obj = datetime.strptime(timestamp, '%Y-%m-%d-%H-%M-%S')
-    #     formatted_time = datetime_obj.strftime("%Y%m%d_%H%M%S")
     if timestamp is not None:
         # If timestamp is a floating-point number (UNIX timestamp)
         if isinstance(timestamp, float):
@@ -611,6 +622,7 @@ def write_prompt(database_dir, signal, data, chat_dir, count_path):
     except Exception as e:
         print(f"An error occurred while writing to the file: {e}")
         
+
 def update_token(input_token, output_token, token_path):
     # Read data from token_path
     if os.path.exists(token_path):
@@ -620,14 +632,6 @@ def update_token(input_token, output_token, token_path):
     else:
         data = []
         prompt_id = 0
-
-    # prompt_id = read_state(logging_path)
-    # prompt_id = prompt_id - 1 # important
-
-    # if os.path.exists(token_path):
-    #     data = read_json(token_path)
-    # else:
-    #     data = []
     
     data.append({
         "prompt_id": prompt_id,
@@ -646,23 +650,16 @@ def calculate_tokens(data, encoder):
 
 def deduplicate_sections(data):
     """
-    If there are multiple occurrences of specified sections in the conversation history,
-    remove all but the most recent one to reduce token usage.
-
-    ## Note: For C code segments, each turn may involve translating different code blocks
-    (e.g., first katajainen.c functions, then deflate.c functions). In such cases,
-    removing older entries would lose important context (what the LLM has already translated),
-    potentially breaking consistency with the assistant's responses.
-    
-    On the other hand, sections like "## Directory structure" or
-    "## Existing code already in" represent the latest snapshot of the state,
-    so it is safe to remove older ones.
+    If there are multiple occurrences of specified sections in the conversation history, remove all but the most recent one to reduce token usage.
+    ## Note: For C code segments, each turn may involve translating different code blocks (e.g., first katajainen.c functions, then deflate.c functions). In such cases, removing older entries would lose important context (what the LLM has already translated), potentially breaking consistency with the assistant's responses.
+    On the other hand, sections like "## Directory structure" or "## Existing code already in" represent the latest snapshot of the state, so it is safe to remove older ones.
     """
+
     section_headers = [
         # macro/pre_process.py
         "## Response format", 
 
-        # compile.py
+        # trasn/compile.py
         "## Directory structure", 
         #"## C code segment",
         "## Rust source code",
@@ -675,7 +672,7 @@ def deduplicate_sections(data):
         "## The converted Rust source code", 
         "## The original C JSON-formatted metadata",
 
-        # semantics.py
+        # trasn/semantics.py
         "## Executed test case",
         #"## Error in",
         "## Standard output of execution",
@@ -762,13 +759,9 @@ def deduplicate_c_code_segments(data):
 
 
 def deduplicate_prompt(data):
-
     data = deduplicate_sections(data)
-
     data = deduplicate_c_code_segments(data)
-
     return data
-
 
 
 def trim_json_data(llm_choice, llm_model, data, max_tokens): # "gpt-3.5-turbo"
@@ -805,10 +798,12 @@ def trim_json_data(llm_choice, llm_model, data, max_tokens): # "gpt-3.5-turbo"
         test_data = trimmed_data.copy()
         test_data.append(item)
         test_tokens = calculate_tokens(test_data, encoder) + system_tokens
+        #print(f"test_tokens: {test_tokens}")
 
         if test_tokens <= max_tokens:
             trimmed_data.append(item)
             total_tokens = calculate_tokens(trimmed_data, encoder)
+            #print(total_tokens)
         else:
             break
 
@@ -822,6 +817,7 @@ def trim_json_data(llm_choice, llm_model, data, max_tokens): # "gpt-3.5-turbo"
     # Add system messages back to the beginning
     trimmed_data = system_messages + trimmed_data
 
+    #print(f"Processed file saved as: {output_file}")
     final_tokens = calculate_tokens(trimmed_data, encoder)
     if final_tokens != current_total_tokens:
         print(f"Total tokens after trimming: {final_tokens}")
@@ -836,19 +832,15 @@ def occupy_llm(instance: LLMInterface):
     occupy_path = instance.occupy_path
     llm_choice = instance.llm_choice
     target_cmd = instance.project_id
-    full_regions = instance.full_regions
+    #full_regions = instance.full_regions
 
     print(occupy_path)
     occupy_data = read_json(occupy_path)
     found = False
-    # given_azure_endpoint = None
-    # given_region = None
 
     for item in occupy_data[llm_choice]:
         if item['use'] is False:
-            # if not ('par' in item and item['par'] == "3"):
-            #     continue
-            if 'region' in item and item['region'] in full_regions:
+            if 'region' in item: #and item['region'] in full_regions:
                 continue
             given_api_key = item['given_api_key'] 
             if 'given_azure_endpoint' in item:
@@ -887,7 +879,7 @@ def configure_llm(instance: LLMInterface, given_api_key: str, given_azure_endpoi
     occupy_path = instance.occupy_path
     llm_choice = instance.llm_choice
     target_cmd = instance.project_id
-    full_regions = instance.full_regions
+    #full_regions = instance.full_regions
 
     instance.api_key = given_api_key
     instance.azure_endpoint = given_azure_endpoint
@@ -925,7 +917,7 @@ def shutdown_llm(instance: LLMInterface):
             if os.path.exists(token_path):
                 cost = calc_claude_cost_from_file(token_path)
                 print(f"Cost: ${cost['total_cost_usd']:.2f}")
-
+        #item['program'] = None
         found = True
         break
 
@@ -980,20 +972,6 @@ def extract_json_response(llm_choice, response_text):
             if match:
                 response_text = match.group(1).strip()
 
-            """ 
-            # Detect and remove ```json ... ``` code block format
-            if '```json' in response_text:
-            # if response_text.strip().startswith('```'):
-                # Remove the first ``` line
-                lines = response_text.strip().split('\n')
-                if lines[0].startswith('```'):
-                    lines = lines[1:]
-                # Remove the last ``` line
-                if lines and lines[-1].strip() == '```':
-                    lines = lines[:-1]
-                response_text = '\n'.join(lines)
-            """ 
-
             if llm_choice in ['gpt', 'gpt_azure', 'gpt_azure_databricks']:
                 if response_text is None:
                     decode_failure = True
@@ -1001,6 +979,7 @@ def extract_json_response(llm_choice, response_text):
                 response_json = json.loads(response_text)
 
             elif llm_choice in ['claude', 'claude_azure', 'claude_bedrock']:
+                # response_json = json.loads("{" + response_text[:response_text.rfind("}") + 1], strict=False)
                 response_json = json.loads(response_text, strict=False)
 
         except json.JSONDecodeError as e:
@@ -1022,18 +1001,6 @@ def extract_json_response(llm_choice, response_text):
                 print(f"Error decoding JSON: {e}")
                 decode_failure = True
                 error_text = f"Failed to decode modified_data JSON: {str(e)}"
-                # raise ValueError("Failed to decode JSON.")
-
-
-            """
-            # rgba is particularly hard to decode
-            decode_failure, cleaned_json = clean_response(response_text)
-            if decode_failure is True:
-                return decode_failure
-            else:
-                response_json = cleaned_json
-                response_json['ongoing'] = True
-            """
 
             return decode_failure, error_text
 
@@ -1048,7 +1015,6 @@ def extract_json_response(llm_choice, response_text):
         decoded_rust_code = decoded_rust_code + padding
         
         # Update JSON with decoded code
-        # response_json['rust_code'] = decoded_rust_code
         if is_base64_decodable(response_json['rust_code']):
             response_json['rust_code'] = base64_decode(response_json['rust_code'])
 
@@ -1087,18 +1053,14 @@ def extract_json_response(llm_choice, response_text):
             print(response_json)
             raise ValueError("response_json is unparsable")
 
-        print("------------- error_path -------------")
+        print("----------------------------- error_path -----------------------------")
         print(response_json['error_path'])
 
-    # else:
-    #     print("Neither expected key (e.g., 'rust_code' nor 'toml') found in the response")
-    print(f"------------- Response start -------------")
-    print(f"Skipped, because maybe too long.")
-    # print(f"{response_json}")
-    print(f"---------- Response end ----------")  
+    print(f"------------------------ Response start ------------------------")
+    print(f"Skipeed, because maybe too long.")
+    print(f"------------------------ Response end ---------------------------")  
 
     return response_json, error_text  # code_blocks
-
 
 
 def calc_claude_cost_from_file(
@@ -1137,6 +1099,8 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     temperature = llm_interface.temperature
     llm_model = llm_interface.llm_model
     client_id = llm_interface.client_id
+    #llm_interface = config.llm_interface
+
     api_key = llm_interface.api_key
 
     given_model = llm_interface.llm_model
@@ -1145,12 +1109,13 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     given_temperature = llm_interface.temperature
 
     timeout = llm_interface.timeout
+
+    #system_prompt = llm_interface.system_prompt
     history_path = llm_interface.history_path
     token_path = llm_interface.token_path
     database_dir = llm_interface.database_dir
     chat_dir = llm_interface.chat_dir
     count_path = llm_interface.count_path
-    exp_data = llm_interface.exp_data
 
     # print("------------")
     # print(given_api_key)
@@ -1165,9 +1130,9 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     prompt = clean_prompt(prompt)
     prompt = create_prompt_string(prompt) #"\n".join(prompt)
 
-    print(f"-------------------- Prompt --------------------")
+    print(f"------------------------ Prompt ------------------------")
     print(f"{prompt}")
-    print(f"------------------------------------------------")
+    print(f"--------------------------------------------------------")
     write_prompt(database_dir, f"request", prompt, chat_dir, count_path)
     write_prompt(database_dir, f"user", prompt, chat_dir, count_path)
 
@@ -1189,7 +1154,6 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     elif isinstance(memory_type, str) and memory_type == "continue":
         if not os.path.exists(history_path): # For starting with continue from the beginning
             write_json(history_path, [])
-        # trim_json_data(llm_choice, history_path, 150000) # Hits the limit at 200000
         chat_history = read_json(history_path)
     else:
         raise ValueError("You need to set the memory_type: init or continue.")
@@ -1210,7 +1174,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         if llm_choice in ['gpt', 'gpt_azure', 'gpt_azure_databricks']:
             trim_max = 100000
         elif llm_choice in ['claude', 'claude_azure', 'claude_bedrock']:
-            trim_max = 180000 # 130000 # 150000
+            trim_max = 180000 # 900000 #180000 # 130000 # 150000
 
         # Need to trim here
         chat_history = trim_json_data(llm_choice, llm_model, chat_history, trim_max)
@@ -1229,11 +1193,10 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     ################################
     #### LLM interaction
     ################################
-    
     if llm_choice == 'gpt':
         
-        if 'repair_count' in exp_data and 'file_path' in exp_data:
-            print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+        # if 'repair_count' in exp_data and 'file_path' in exp_data:
+        #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
         # Set OpenAI API key                
         openai.api_key = openai_api_key
@@ -1271,7 +1234,6 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         else:
             print("Failed to get a response after multiple retries.")
 
-        #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
         while(1):
             code_blocks = extract_json_response(llm_choice, text)
 
@@ -1338,8 +1300,8 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         given_api_version="2024-05-01-preview"  # Fixed
         given_api_version="2025-01-01-preview"
 
-        if 'repair_count' in exp_data and 'file_path' in exp_data:
-            print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+        # if 'repair_count' in exp_data and 'file_path' in exp_data:
+        #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
         # Set OpenAI API key       
         openai.api_key = openai_api_key
@@ -1353,10 +1315,11 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                 client = AzureOpenAI(
                     api_version=given_api_version,
                     api_key=given_api_key,
-                    azure_endpoint=given_azure_endpoint 
+                    azure_endpoint=given_azure_endpoint,
+                    timeout=600.0 
                 )
-                response = client.chat.completions.create(
-                    model=llm_model,
+                response = client.chat.completions.create( #response = openai.ChatCompletion.create(
+                    model=llm_model, #gpt_model,
                     messages=chat_history,
                     #messages=[
                     #    {"role": "system", "content": "You are a helpful assistant that returns JSON as a response."}, #"You are a helpful assistant."},
@@ -1377,18 +1340,18 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                 time.sleep(wait_time)
 
         if response:  # Only process if the response was successful
-            text = response.choices[0].message.content  #text = response.choices[0].message['content']
+            text = response.choices[0].message.content 
             print(text)
 
-            total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
+            total_tokens = response.usage.total_tokens
             print(f"Total token in {total_tokens}")
             
-            prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-            input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+            prompt_used = response.usage.prompt_tokens
+            input_token = response.usage.prompt_tokens 
             print(f"Prompt token in {prompt_used}")
 
-            completion = response.usage.completion_tokens #response['usage']['completion_tokens']
-            output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
+            completion = response.usage.completion_tokens 
+            output_token = response.usage.completion_tokens 
             print(f"Response token in {completion}")
             
             update_token(input_token, 0, token_path)
@@ -1396,37 +1359,35 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         else:
             print("Failed to get a response after multiple retries.")
 
+        #code_blocks = extract_code_blocks(text)  # ask_llm function before JSON format
         while(1):
             code_blocks, error_text = extract_json_response(llm_choice, text)
 
             if isinstance(code_blocks, bool):                
                 print("Failure in getting code_blocks.")
 
-                # Write LLM response. Is this correct?
+                # Write LLM response.
                 write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
                 write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
 
                 update_token(0, output_token, token_path)
-                
 
                 chat_history.append({"role": "system", "content": "Failure in getting correct JSON format."})
-                #chat_history.append({"role": "user", "content": "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."})
                 instruction = "Make sure to properly escape control characters within the JSON string of the response. Also, to meet the token limit, please respond with 100 lines at a time."
                 chat_history.append({"role": "user", "content": instruction})
                 write_prompt(database_dir, f"request", instruction, chat_dir, count_path)
-                # prompt_count = load_prompt_count()
                 write_prompt(database_dir, f"user", instruction, chat_dir, count_path)
-
                 update_token(input_token, 0, token_path)
 
-                #print(prompt)
+
                 response = None
                 while retries < max_retries:
                     try:
                         client = AzureOpenAI(
                             api_version=given_api_version,
                             api_key=given_api_key,
-                            azure_endpoint=given_azure_endpoint
+                            azure_endpoint=given_azure_endpoint,
+                            timeout=600.0 
                         )
                         response = client.chat.completions.create( #response = openai.ChatCompletion.create(
                             model=gpt_model,
@@ -1450,20 +1411,19 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                         time.sleep(wait_time)
 
                 if response:  # Only process if the response was successful
-                    text = response.choices[0].message.content  #text = response.choices[0].message['content']
+                    text = response.choices[0].message.content
                     print(text)
 
-                    total_tokens = response.usage.total_tokens #response['usage']['total_tokens']
+                    total_tokens = response.usage.total_tokens
                     print(f"Total token in {total_tokens}")
                     
-                    prompt_used = response.usage.prompt_tokens #response['usage']['prompt_tokens']
-                    input_token = response.usage.prompt_tokens #response['usage']['prompt_tokens']
+                    prompt_used = response.usage.prompt_tokens
+                    input_token = response.usage.prompt_tokens
                     print(f"Prompt token in {prompt_used}")
 
-                    completion = response.usage.completion_tokens #response['usage']['completion_tokens']
-                    output_token = response.usage.completion_tokens #response['usage']['completion_tokens']
+                    completion = response.usage.completion_tokens
+                    output_token = response.usage.completion_tokens
                     print(f"Response token in {completion}")
-                    
                     
                 else:
                     print("Failed to get a response after multiple retries.")
@@ -1484,12 +1444,13 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
         
         while(1):
             print("Asking gpt_azure_databricks...")
-            if 'repair_count' in exp_data and 'file_path' in exp_data:
-                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+            # if 'repair_count' in exp_data and 'file_path' in exp_data:
+            #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
             client = OpenAI(
                 api_key=given_api_key,
-                base_url=given_azure_endpoint
+                base_url=given_azure_endpoint,
+                timeout=httpx.Timeout(600.0, connect=120.0),
             )
             print("============ chat_histroty start ============")
             #print(chat_history)
@@ -1575,21 +1536,16 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                 if response_flag:
                     break
         
-            text = message.choices[0].message.content #message.content[0].text
+            text = message.choices[0].message.content
             print(text)
 
-            # input_token = message.usage.input_tokens
-            # output_token = message.usage.output_tokens
-            # print(message.usage.input_tokens)
-            # print(message.usage.output_tokens)
-
-            total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
+            total_tokens = message.usage.total_tokens
             print(f"Total token in {total_tokens}")
             
-            input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
+            input_token = message.usage.prompt_tokens
             print(f"Prompt token in {input_token}")
 
-            output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
+            output_token = message.usage.completion_tokens
             print(f"Response token in {output_token}")
     
 
@@ -1616,16 +1572,16 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 """
 
                     write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                    # prompt_count = load_prompt_count()
                     write_prompt(database_dir, f"user", addition, chat_dir, count_path)
-
                     chat_history.append({"role": "user", "content": f"{addition}"})
                     
                     long_count += 1
                 else:
                     
-                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
+                    chat_history.append({
+                        "role": "assistant", 
+                        "content": f"The response in JSON format could not be correctly JSON decoded."
+                    }) 
 
                     if error_text is None:
                         print("Error in addition_error1")
@@ -1636,20 +1592,18 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     else:
                         if risky_error > 10:
                             raise ValueError("Stop due to bad format.")
-                        print("Error in addition_error2")
-                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                        addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                        chat_history.append({"role": "user", "content": f"{addition_error2}"})
+                        print("Error in addition_error")
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
                     
-                        write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
 
                         risky_error += 1
 
 
     elif llm_choice == 'gemini':
-        if 'repair_count' in exp_data:
-            print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+        # if 'repair_count' in exp_data:
+        #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
             
         # configure
         genai.configure(api_key=gemini_api_key)
@@ -1744,9 +1698,9 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     output = f"{event}"
                     response_output += output
                 
-                print("---------------- response_output for llama ----------------")
+                print("--------------------- response_output for llama ---------------------")
                 print(response_output)
-                print("---------------- response_output end for llama ----------------")
+                print("--------------------- response_output end for llama ---------------------")
 
                 code_blocks = extract_braces_json(response_output)
 
@@ -1771,8 +1725,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 break
 
         # Limiting to user and assistant roles here.
-        #chat_history.append({"user": prompt})
-        #chat_history.append({"assistant" : response_output})
         chat_history.append({"role": "user", "content": prompt})
         chat_history.append({"role": "assistant", "content": response_output})
         
@@ -1788,8 +1740,9 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
         while(1):
             print("Asking Claude Anthropic...")
-            if 'repair_count' in exp_data and 'file_path' in exp_data:
-                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+            # if 'repair_count' in exp_data and 'file_path' in exp_data:
+            #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+
             client = anthropic.Anthropic(
                 api_key = given_api_key,
             )
@@ -1801,7 +1754,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    if llm_model == "claude-opus-4-7":
+                    if llm_model in ["claude-opus-4-7", "claude-opus-4-8"]:
                         with client.messages.stream(
                             model=llm_model,
                             max_tokens=output_max, #32000,
@@ -1914,7 +1867,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             input_token = message.usage.input_tokens
             output_token = message.usage.output_tokens
 
-            #print(text)
             print(message.usage.input_tokens)
             print(message.usage.output_tokens)
 
@@ -1945,22 +1897,15 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     # Return only JSON format data without including any text.
 
                     write_prompt(database_dir, f"request", addition, chat_dir, count_path)
-                    # prompt_count = load_prompt_count()
                     write_prompt(database_dir, f"user", addition, chat_dir, count_path)
-
                     chat_history.append({"role": "user", "content": f"{addition}"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                    
+
                     long_count += 1
                 else:
-                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   # chat_history.append({"role": "assistant", "content": "Imappropriate response format"})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."}) 
 
                     if error_text is None:
                         addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
-                        #addition_error = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                        #addition_error = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
                         chat_history.append({"role": "user", "content": f"{addition_error}"})
                         write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
 
@@ -1968,11 +1913,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                         if risky_error > 10:
                             raise ValueError("Stop due to bad format.")
 
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
                         addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                        #addition_error = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                        #addition_error = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
-                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
                         chat_history.append({"role": "user", "content": f"{addition_error}"})
                     
                         write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
@@ -1991,18 +1932,14 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
         while(1):
             print("Asking Azure Claude Anthropic...")
-            if exp_data is not None and 'repair_count' in exp_data and 'file_path' in exp_data:
-                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+
+            # if exp_data is not None and 'repair_count' in exp_data and 'file_path' in exp_data:
+            #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
             #############################
             ## For service point usage
             #############################
-
             """
-            host = given_azure_endpoint #given_azure_endpoint
-            client_id = client_id
-            client_secret = given_api_key
-
             host_url = host.replace("/serving-endpoints", "")
             wc = WorkspaceClient(
                 host=host_url,
@@ -2017,17 +1954,19 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 base_url=f"{host}"
             )
             """
-
+            
             #############################
             #"""
             client = OpenAI(
                 api_key=given_api_key,
-                base_url=given_azure_endpoint 
+                base_url=given_azure_endpoint,
+                timeout=httpx.Timeout(600.0, connect=120.0),
+                # max_retries=8,
             )
             #"""
             
             print("============ chat_histroty start ============")
-            #print(chat_history)
+            # print(chat_history)
             print("Skipping chat history")
             print("============ chat_histroty end ============")
             max_retries = 100 #5
@@ -2035,7 +1974,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    if llm_model == "databricks-claude-opus-4-7":
+                    if llm_model in ["databricks-claude-opus-4-7", "databricks-claude-opus-4-8", "databricks-claude-opus-5"]:
                         message = client.chat.completions.create(
                             model=llm_model,
                             max_tokens=output_max,
@@ -2058,6 +1997,13 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     # 400: BadRequest
                     if type(e) is openai.BadRequestError:
                         print(f"OpenAI BadRequest Error: [{e}]")
+                        if "must not be empty" in str(e):
+                            raise ValueError(
+                                f"No valid user message remains after trimming. "
+                                f"The prompt tokens may have exceeded trim_max={trim_max}. "
+                                f"roles={[m.get('role') for m in chat_history]}"
+                            ) from e
+                            
                         # When the token count exceeds the context window maximum
                         if "This model's maximum context length is" in str(e):
                             print(f"Token over [{e}]")
@@ -2125,20 +2071,26 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             if not response_flag:
                 raise ValueError(f"API request failed after {max_retries} retries")
         
-            text = message.choices[0].message.content #message.content[0].text
-            # input_token = message.usage.input_tokens
-            # output_token = message.usage.output_tokens
-            # print(message.usage.input_tokens)
-            # print(message.usage.output_tokens)
-
-            total_tokens = message.usage.total_tokens #response['usage']['total_tokens']
-            input_token = message.usage.prompt_tokens #response['usage']['prompt_tokens']
-            output_token = message.usage.completion_tokens #response['usage']['completion_tokens']
-
-            print(text)
-            print(f"Total token in {total_tokens}")
-            print(f"Prompt token in {input_token}")
-            print(f"Response token in {output_token}")
+            text = message.choices[0].message.content
+            finish_reason = message.choices[0].finish_reason
+            if text is None:
+                print(message)
+                print(f"[ask_llm] content is None — finish_reason={finish_reason}, "
+                    f"prompt_tokens={message.usage.prompt_tokens}, "
+                    f"completion_tokens={message.usage.completion_tokens}")
+                chat_history.append({
+                    "role": "user",
+                    "content": "The previous response contained no text content. "
+                            "Please respond again with only the JSON data wrapped in ```json ... ``` blocks."
+                })
+                risky_error += 1
+                if risky_error > 10:
+                    raise ValueError("Stop: repeated empty responses.")
+                continue
+                    
+            total_tokens = message.usage.total_tokens
+            input_token = message.usage.prompt_tokens
+            output_token = message.usage.completion_tokens
 
             update_token(input_token, 0, token_path)
 
@@ -2149,8 +2101,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
                 update_token(0, output_token, token_path)
 
-                #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-
                 if output_token > output_max: #4000: # Already hit the limit at 4073
                     chat_history.append({"role": "assistant", "content": f"The answer length exceeds {output_max} tokens."}) #"Too long response"})
 
@@ -2159,27 +2109,14 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 When including code in the response, even if it's in the middle of a logical unit (function, data structure, etc.), please divide the code in the JSON key into chunks of 100 lines segments and answer the first segment now. Please make sure not to truncate the JSON data in your response.
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
-                    # When splitting, set the value of the 'parsable' key in the JSON response to false.
-                    #print(prompt)
-                    # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
-                    # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
-                    # Make sure it is {output_max} tokens or less and respond again.
-                    # When splitting midway, enter the boolean value False for the 'parsable' key value.
-                    # Return only JSON format data without including any text.
-
                     write_prompt(database_dir, f"request", addition, chat_dir, count_path)
                     write_prompt(database_dir, f"user", addition, chat_dir, count_path)
-
                     chat_history.append({"role": "user", "content": f"{addition}"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                    
+  
                     long_count += 1
                 
                 else:
-                    
-                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
+                    chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."}) 
 
                     if error_text is None:
 
@@ -2191,10 +2128,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                         if risky_error > 10:
                             raise ValueError("Stop due to bad format.")
                         
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
-                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
                         addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
                         chat_history.append({"role": "user", "content": f"{addition_error}"})
                     
                         write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
@@ -2212,8 +2146,8 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
         while(1):
             print("Asking Bedrock Claude Anthropic...")
-            if 'repair_count' in exp_data and 'file_path' in exp_data:
-                print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
+            # if 'repair_count' in exp_data and 'file_path' in exp_data:
+            #     print(f"repair_count is {exp_data['repair_count']} for {exp_data['file_path']}")
 
             client = AnthropicBedrock(
                 # api_key=given_api_key,
@@ -2273,8 +2207,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
                 
                 update_token(0, output_token, token_path)
-                #chat_history.append({"role": "assistant", "content": "Too long response"})
-                #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
 
                 if output_token > output_max: #4000: # Already hit the limit at 4073
                     print("Too long response")
@@ -2287,7 +2219,6 @@ When including code in the response, even if it's in the middle of a logical uni
 Also, if there is remaining code, set the value of the 'ongoing' key to a boolean value of True. If the code is the final part, set the value of the 'ongoing' key to a boolean value of False.
 """
                     # When splitting, set the value of the 'parsable' key in the JSON response to false.
-                    #print(prompt)
                     # Responses must always be strictly in JSON format only, without any explanatory text or additional text.
                     # If a single unit that can be parsed by ctags, such as a function or data type starting from a line with no indentation, is too long, split it midway.
                     # Make sure it is {output_max} tokens or less and respond again.
@@ -2298,35 +2229,25 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                     write_prompt(database_dir, f"user", addition, chat_dir, count_path)
 
                     chat_history.append({"role": "user", "content": f"{addition}"})
-                    #chat_history.append({"role": "user", "content": f"The answer length exceeds 4096 tokens. Please make sure it is {output_max} tokens or less and respond again. Return only JSON format data without including any text."})
-                    
                     long_count += 1
 
                 else:
                     chat_history.append({"role": "assistant", "content": f"The response in JSON format could not be correctly JSON decoded."})   #"Imappropriate response format"})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be correctly JSON decoded. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Return only JSON format data without including any text."})
-                    #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please do not surround the JSON content with backticks. Respond again with only JSON data and no text."})
 
                     if error_text is None:
                         print("Error in addition_error1")
-                        #addition_error1 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
                         addition_error1 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. When representing backslashes as byte literals, use four backslashes. When representing backslashes as character literals, use two backslashes."
-                        #addition_error1 = f"The response in JSON format could not be decoded correctly. If Rust code is included in the response, please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure.  When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes). When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes. Respond again with only JSON data and no text."
                         chat_history.append({"role": "user", "content": f"{addition_error1}"})
                         write_prompt(database_dir, f"user", addition_error1, chat_dir, count_path)
 
                     else:
                         if risky_error > 10:
                             raise ValueError("Stop due to bad format.")
-                        print("Error in addition_error2")
-                        #chat_history.append({"role": "user", "content": f"The response in JSON format could not be decoded correctly. Please base64 encode the rust_code in the response using encoded = base64.b64encode(text.encode('utf-8')), and return it as the value of \"rust_code\" in JSON format."})
-                        #addition_error2 = f"The response in JSON format could not be decoded correctly. Please respond again with only one JSON data and no text so that it can be processed with json.loads() and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason text within the JSON data. Please respond with only one pure JSON data without using code blocks or markdown syntax such as ```json <text>```."
-                        addition_error2 = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
-                        #addition_error2 = f"The response in JSON format could not be decoded correctly. If Rust code is not included in the response, then please respond again with only JSON data and no text and also please properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. If Rust code ('rust_code' key value) is included, for the rust_code field value, please use base64-encoded Rust code (using base64.b64encode(text.encode('utf-8'))). Do not use the raw Rust code containing escape characters and line breaks."
-                        #please encode the rust_code included in your response using base64.b64encode(text.encode('utf-8')), and include it as the value of 'rust_code' in JSON format."
-                        chat_history.append({"role": "user", "content": f"{addition_error2}"})
+                        print("Error in addition_error")
+                        addition_error = f"The response in JSON format could not be decoded correctly. Please wrap your JSON response in ```json ... ``` markdown code blocks. Properly escape characters that require escaping (e.g., newlines, double quotes) while maintaining the original JSON structure. Please include the explanation text in the reason field within the JSON data."
+                        chat_history.append({"role": "user", "content": f"{addition_error}"})
                     
-                        write_prompt(database_dir, f"user", addition_error2, chat_dir, count_path)
+                        write_prompt(database_dir, f"user", addition_error, chat_dir, count_path)
 
                         risky_error += 1
 
@@ -2339,9 +2260,6 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             reverse_gemini_history(gemini_history)
         
         write_json(history_path, chat_history)
-
-    # write_exp_data(exp_data, input_token, output_token)
-    # ask_count += 1
 
     write_prompt(database_dir, f"response", code_blocks, chat_dir, count_path)
     write_prompt(database_dir, f"llm", code_blocks, chat_dir, count_path)
@@ -2364,10 +2282,10 @@ def get_tool_cmd(WO_TOOL, tool_string):
 def get_path_info(callee_main_path, target_entry):
     prompt = []
     candidates = []
-    
+    count = 1
+
     callee_data = read_json(callee_main_path)
     
-    count = 1
     # Add a list to track path lengths
     path_lengths = []
     path_with_lengths = []  # List to store paths together with their lengths
@@ -2402,7 +2320,7 @@ def get_path_info(callee_main_path, target_entry):
     # Add only the path with the minimum length
     for path_info in path_with_lengths:
         if path_info['length'] == min_length:
-            candidates.append(f"# Target path")  # {path_info['path_number']}")
+            candidates.append(f"# Target path")
             candidates.extend(path_info['path'])
             candidates.append("")
             break
@@ -2415,10 +2333,9 @@ def get_path_info(callee_main_path, target_entry):
 def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
     prompt = []
     candidates = []
-    
-    callee_data = read_json(callee_main_path)
-    
     count = 1
+
+    callee_data = read_json(callee_main_path)
     
     # Add a list to track path lengths
     path_lengths = []
@@ -2463,12 +2380,10 @@ def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
     prompt.extend(["## Fucntion call relationship from main():", "Please select one path from the possible paths below and write a test case that reaches that target function."])
     prompt.extend(candidates)
     
-    ####
     all_paths = list(set(all_paths))
     result = {}
     for item in all_paths:
         result[item] = False
-    ####
 
     cov_data = read_json(function_branch_path)
     if cov_data is not None:
@@ -2499,12 +2414,6 @@ def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
     if count == 0:
         covered_prompt.append("None")
 
-    # covered_prompt.append("") 
-    # covered_prompt.append("### Uncovered path")
-    # for key, value in result.items():
-    #     if value == False:
-    #         covered_prompt.append(key)
-
     return prompt, count, min_length, max_length, covered_prompt
 
 
@@ -2523,7 +2432,6 @@ def trim_code(target_path, file_code, given_limit, model="gpt-4"):
     full_tokens = len(encoder.encode(file_code))
     
     if full_tokens <= given_limit:  # If already within the limit, return the whole content
-        # print("Within limit")
         return file_code
     
     # Use binary search to find the largest portion that fits within the limit
@@ -2552,15 +2460,14 @@ def trim_code(target_path, file_code, given_limit, model="gpt-4"):
     # Add an omission message (based on token count)
     remaining_tokens = full_tokens - len(encoder.encode(trimmed))
     trimmed += f"\n... ( remaining_tokens is {remaining_tokens}.) Exceeding token limit, content truncated. To view the complete content of {target_path}, please use read_data mode and set file_slice (specified range) to read each section separately."
-    
-    print("trimmed")
+
     return trimmed
 
 
 # Revision proposal
 def trim_data(work_dir, target_path, file_code, given_limit):
-    model = "gpt-4" # given_limit = 8000 #10000
-
+    # given_limit = 8000 #10000
+    model = "gpt-4"
     write_file(target_path, file_code)
     
     # Convert to string type
@@ -2572,7 +2479,6 @@ def trim_data(work_dir, target_path, file_code, given_limit):
     
     # The following is the same as the original code
     if full_tokens <= given_limit:  # If already within the limit, return the whole content
-        print("Within limit")
         return file_code
     
     # Use binary search to find the largest portion that fits within the limit
@@ -2602,24 +2508,22 @@ def trim_data(work_dir, target_path, file_code, given_limit):
     remaining_tokens = full_tokens - len(encoder.encode(trimmed))
     trimmed += f"\n... ( remaining_tokens is {remaining_tokens}.) Exceeding token limit, content truncated.. To view the complete content of {target_path}, please use read_data mode and set file_slice (specified range) to read each section separately."
     
-    print("trimmed")
     return trimmed
 
 
 
-def get_dir_struct(app_type, target_dir, original_target_dir):  # , original_dir=None
-    print(f"Getting directory structure: {target_dir}")
-    # print(target_dir)
-    # print(original_target_dir)
+def get_dir_struct(app_type, target_dir, original_target_dir):
+    target_dir = os.path.abspath(target_dir)
+    original_target_dir = os.path.abspath(original_target_dir)
+
+    # print(f"Getting directory structure: {target_dir}")
     parent_path = None
     if original_target_dir is not None:
         parent_path = os.path.dirname(original_target_dir)
-    # print(parent_path)
 
     # List of directories to exclude
     # excluded_dirs = ['build', '.github', '.gitlab', '.tx', '.git', 'fuzz', 'test']  # ['target']
-    # excluded_dirs = ['build', '.github', '.gitlab', '.tx', '.git', 'fuzz', 'test']  # ['target']
-    
+ 
     # List of directories and extensions to exclude
     excluded_dirs = []
     excluded_extensions = []
@@ -2665,13 +2569,15 @@ def get_dir_struct(app_type, target_dir, original_target_dir):  # , original_dir
             line_comment = f"  # {line_num}Lines" if line_num else ""
 
             result.append(f"{prefix}{curr_prefix}{item.name}{comment}{line_comment}")
-            
+            # result.append(f"{prefix}{curr_prefix}{item}{comment}{line_comment}")
+
             if item.is_dir():
                 add_tree(item, prefix + next_prefix)
     
     root = Path(target_dir)
-    result.append(root.name)
-    
+    # result.append(root.name)
+    result.append(str(root))
+
     add_tree(target_dir)
     return "\n".join(result)
 
@@ -2751,15 +2657,15 @@ def reflect_line_modification(modifications, work_dir, database_dir):
         new_modifications.append(item)
     modifications = new_modifications
 
+    for item in modifications:
+        data = item.get('modified_data')
+        if isinstance(data, (dict, list)):
+            item['modified_data'] = json.dumps(data, indent=4, ensure_ascii=False)
+
     # Handle the shorthand case where end_line = -1
     for item in modifications:
         end_line = item['end_line']
         if end_line == -1:
-            # print(f"Found short hand: {item}")
-
-            # write_file(item['file_path'], item['modified_data'])
-            # print(f"Created a new file or modified the entire file: {item}")
-
             if item.get('is_JSON', False) or isinstance(item['modified_data'], (dict, list)):
                 write_file(item['file_path'], json.dumps(item['modified_data'], indent=4, ensure_ascii=False))
             else:
@@ -2767,20 +2673,15 @@ def reflect_line_modification(modifications, work_dir, database_dir):
 
     # Processing
     for item in modifications:  # Insert current_code
-        # Is this okay when the file is extremely long?
         if item['end_line'] == -1:
             print(f"Finished for end_line = -1")
 
         else:
-            # print(f"Found start_line? {item}")
-            # print(f"modifications is {modifications}")
-
             item['current_code'] = read_specific_lines(item['file_path'], item['start_line'], item['end_line'])
             item['current_end_line'] = item['end_line']
             item['current_code_found'] = True
         
     reflect_timestamp = get_timestamp()
-    # write_json(f'look_modifs/look_modifs{str(reflect_timestamp)}.json', modifications)
 
     # Group modifications by file
     file_modifications = {}
@@ -2812,14 +2713,18 @@ def reflect_line_modification(modifications, work_dir, database_dir):
 
             offset = 0
             start_line = mod['start_line'] - 1  # 0-indexed
+            # print(f"Fixing line: {mod['start_line']} in {mod['file_path']}")
+            # if 'current_code' not in mod:  # This is causing the problem. Remove this for now.
+                # return False  # Remove this for now
             
             if not ('current_code_found' in mod and mod['current_code_found'] == True):
                 mod['current_code_found'] = False
-
                 if 'modified_data' in mod:  # To avoid errors here
                     write_file(interval_path, mod['modified_data'])
-                    insert_modified_data(mod)
+                    insert_modified_data(mod)  # , current_code_length
             else:
+                # print("Found current_code")
+
                 current_code = read_specific_lines(mod['file_path'], mod['start_line'], mod['current_end_line'])
                 write_file(interval_path, current_code)
                 current_code_length = count_file_lines(interval_path)
@@ -2829,29 +2734,12 @@ def reflect_line_modification(modifications, work_dir, database_dir):
                     write_file(interval_path, mod['modified_data'])
                     modified_data_length = count_file_lines(interval_path)
                     # print(f"start_line {mod['start_line']}, modified_data_length: {modified_data_length}, current_code_length: {current_code_length}")
-                    insert_modified_data(mod) 
-
-        # Update block information for the modified file
-        # update_c_block(c_path, test_path, meta_dir)
+                    insert_modified_data(mod)  # , current_code_length
 
     delete_file(interval_path)
-
     print("Code modifications completed.")
-
-    """
-    if app_type == "translation":
-        # Identify c_key elements that should have existed at the modified locations
-        # key_json = update_modified_keys(key_json, modified_lines)
-        # List c_key elements that did not correspond to the modified locations and compute unmodified_lines.
-        # All other code lines are treated as modified lines.
-        return file_modifications
-    
-    else:
-        return True
-    """
     
     return file_modifications
-
 
 
 def check_excluded(target_dir, see_path):
@@ -2872,8 +2760,6 @@ def check_excluded(target_dir, see_path):
     
     # If it is not included in any excluded directory
     return False
-
-
 
 
 def add_line_numbers_custom(input_file, fixed_number):
@@ -2939,8 +2825,6 @@ def save_coverage_report(cov_target, cov_report_path, token_path, branch_coverag
         average_coverage = function_coverage
     elif  cov_target == "branch":
         average_coverage = branch_coverage
-
-
    
     if os.path.exists(cov_report_path):
         data = read_json(cov_report_path)
@@ -2960,13 +2844,11 @@ def save_coverage_report(cov_target, cov_report_path, token_path, branch_coverag
         data[f"fuzz_{str(int(fuzz_id)).zfill(4)}"] = str(average_coverage)
 
     else:
-        # none_id = get_none_count()
-        # none_id = int(none_id)
-        # data[f"none_{str(int(none_id)).zfill(4)}"] = str(average_coverage)
         data[f"none_{str(timestamp).zfill(4)}"] = str(average_coverage)
 
     write_json(cov_report_path, data)
 
+    return average_coverage
 
 
 def is_empty_string(file_code):
@@ -3412,13 +3294,6 @@ def create_tmp_rust_json(c_path, meta_dir, label):  # , div_start_line
     c_data = obtain_metadata(c_path, meta_dir, False, False, "def")
 
     # In Rust, except for redefined conditional blocks, elements can be handled independently
-    """
-    if div_start_line is None:
-        div_start_line = 1
-    else:
-        div_start_line = 0
-    """
-
     new_data = []
     for item in c_data:
         if label == "function":
@@ -3565,10 +3440,10 @@ def ask_correspondence(repair_target, interface):
     
     build_path = interface.build_path
     rust_build_path = interface.rust_build_path
-    run_path = interface.rust_build_path  #f"{work_dir}/build_rust.sh" # f"{work_dir}/build_rust.sh" #interface.run_path']
+    run_path = interface.rust_build_path
     
     run_test_path = interface.run_test_path
-    run_all_path = interface.run_all_path  #f"{work_dir}/build_rust.sh" # f"{work_dir}/build_rust.sh" #interface.run_path
+    run_all_path = interface.run_all_path
     
     rust_path = interface.rust_path
     #c_path = interface.c_path
@@ -3595,7 +3470,7 @@ def ask_correspondence(repair_target, interface):
     if not os.path.exists(run_path):
         create_file(run_path)
 
-    execute_path = f"{work_dir}/execute.sh"
+    execute_path = f"{work_dir}/execute.sh" #get_execute_path(run_path) #interface.execute_path']
     if not os.path.exists(execute_path):
         create_file(execute_path)
     else:
@@ -3615,17 +3490,15 @@ def ask_correspondence(repair_target, interface):
         entry = interface.entry
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
-        exp_data = interface.exp_data
         rust_path = interface.rust_path
-        lib_path = interface.lib_path
+        lib_path = interface.lib_path #f"{rust_output_dir}/src/lib.rs" #interface.lib_path']
         
 
     elif repair_target == "ask_generates":
-        answer_path = interface.answer_path  
+        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
-        exp_data = interface.exp_data
         #modified_files = interface.modified_files
         conds_data = read_json(interface.conds_status_path)
         lib_path = interface.lib_path
@@ -3637,38 +3510,32 @@ def ask_correspondence(repair_target, interface):
     elif repair_target == "ask_correspondence" or repair_target == "ask_unimplemented":
         c_path = interface.c_path
         meta_dir = interface.meta_dir
-        answer_path = interface.answer_path 
+        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
-        exp_data = interface.exp_data
         #modified_files = interface.modified_files
 
     elif repair_target == "judge_conds":
-        answer_path = interface.answer_path 
+        answer_path = interface.answer_path  #answer_path = f"{work_dir}/answer.json"
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
-        exp_data = interface.exp_data
         #modified_files = interface.modified_files
         conds_data = read_json(interface.conds_status_path)
         lib_path = interface.lib_path
         build_path = interface.build_path
-        #macro_type = interface.macro_type']
 
     elif repair_target == "judge_macros":
-        answer_path = interface.answer_path  
+        answer_path = interface.answer_path 
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
-        exp_data = interface.exp_data
         #modified_files = interface.modified_files']
         conds_data = read_json(interface.conds_status_path)
         lib_path = interface.lib_path
         build_path = interface.build_path
-        #macro_type = interface.macro_type
 
-    
 
     ################################################
     ##### Iteration start
@@ -3692,7 +3559,7 @@ def ask_correspondence(repair_target, interface):
     module_list = []
 
     while (1):
-        if repair_count == REPAIR_MAX: # exp_data['repair_count'] == REPAIR_MAX:
+        if repair_count == REPAIR_MAX: 
             print(f"Force to finish. Hit the REPAIR_MAX ({REPAIR_MAX}).")
             iteration_dict[rust_path] = repair_count
             sys.exit(1)  #return True
@@ -3700,19 +3567,13 @@ def ask_correspondence(repair_target, interface):
         if mode != "read_data":
             if (repair_count != 1 and repair_target == "build") or repair_target == "compile": #if (repair_count != 1 and (repair_target == "build" or repair_target == "compile")): # This shouldn't be repair_count != 1, right?
                 error, std_out, repair_count = run_script(run_path, 50, True, None, "both", None, repair_count, None, None, mode)
-                # print(f"Judging at run_script: error: {error}")
-
-        # exp_data['repair_count'] = repair_count
-        # exp_data['phase'] = 'repair'
-    
-        # if ongoing_flag is False and error is None and mode != "read_data": # This condition is tricky because ongoing_flag might not be functioning correctly.
-        #     break
+                print(f"Judging at run_script: error: {error}")
 
         if repair_target in ["ask_generates", "ask_correspondence", "ask_unimplemented", "judge_conds",  "judge_macros"]:
             if repair_count != 1 and mode != "read_data" and ongoing_flag is False:
                 break
 
-        # print(f"Judging at {repair_count}: mode: {mode}, ongoing_flag: {ongoing_flag}, error: {error}")
+        print(f"Judging at {repair_count}: mode: {mode}, ongoing_flag: {ongoing_flag}, error: {error}")
         if error is None and mode != "read_data" and ongoing_flag is False:
             break
 
@@ -3746,7 +3607,6 @@ def ask_correspondence(repair_target, interface):
                 
                 prompt.extend(sentence)
 
-
                 prompt.extend(["", "## Translation instructions:",
                                "- The Rust program will be generated as a library crate.",
                                #"- Please create the project using the --lib option.",
@@ -3757,10 +3617,8 @@ def ask_correspondence(repair_target, interface):
                 ])
             
             else:
-                #rust_build_path = f"build_rust.sh" #f"{}"
                 if error is None:
                     prompt = [f"Please continue providing the answer on how to resolve the errors that occur when compiling {rust_output_dir}."]
-                    #prompt = [f"Please continue providing the answer on how to resolve the errors that occur when executing {rust_build_path}."]
 
                 else:
                     if ongoing_flag is False:
@@ -3809,16 +3667,13 @@ def ask_correspondence(repair_target, interface):
                 ])
                             
                 prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"]) 
-                #prompt.extend([json_template])
-                #prompt.extend([autonomous_template])
                 prompt.extend([ask_map_template])
-
 
                 sentence = []
                 if macro_list:
                     prompt.extend(["", "## Macro variables defined in the original C program:"])
                     for item in macro_list:
-                        prompt.append(f"{item['name']}")  # {item['value']}
+                        prompt.append(f"{item['name']}")
 
                 rust_code = get_lined_code(target_path, work_dir)
                 prompt.extend(["", f"## Rust Code in {target_path}", rust_code])
@@ -3832,18 +3687,10 @@ def ask_correspondence(repair_target, interface):
                             "rust_end_line" : None,
                             #"rust_code" : None,
                         })
-                write_json("tmp_macro.json", tmp_json_data)
-                tmp_json_data = read_file("tmp_macro.json")
-                delete_file("tmp_macro.json")
+                write_json(f"{database_dir}/tmp_macro.json", tmp_json_data)
+                tmp_json_data = read_file(f"{database_dir}/tmp_macro.json")
+                delete_file(f"{database_dir}/tmp_macro.json")
 
-                # for macro, item in conds_data.items():
-                #     tmp_json_data.append({
-                #         "name" : macro, 
-                #         "rust_code" : None,
-                #         "file_path" : None,
-                #         "start_line" : None,
-                #         "end_line" : None,
-                #     })
 
                 prompt.extend(["", "## The original C JSON-formatted metadata:", tmp_json_data])
             
@@ -3857,8 +3704,6 @@ def ask_correspondence(repair_target, interface):
                 ])
 
                 prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"]) 
-                #prompt.extend([json_template])
-                #prompt.extend([autonomous_template])
                 prompt.extend([ask_map_template])
 
         if repair_target == "ask_correspondence":
@@ -3879,8 +3724,10 @@ def ask_correspondence(repair_target, interface):
                                 f"- Do NOT use read_data mode to read {answer_path}. It is the output file and will be populated by your modify_data responses.",
                                 "- Please provide responses only for the Rust code equivalents of the JSON metadata shown below. Do not respond with code elements other than the JSON metadata shown below.",
                                 "- Please change the value of the 'rust_code' key according to the category of the element:",
-                                f"    - Functions: Please write only the function signature for each function, excluding the function body entirely, ensuring that input and output types are visible.",
-                                f"    - Others: Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than direct line-by-line correspondence. A block should represent a complete logical unit such as an entire struct definition, conditional block and so on.",# This ensures the translated code maintains its semantic structure rather than being split mid-block.",
+                                "- Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than line-by-line correspondence. This means a conditional block must be treated as a single unit.",
+                                "- For each function, please write only the function signature, excluding the function body entirely, so that the input and output types remain visible. However, if a function is enclosed within a conditional block, keep the conditional block itself intact and place the signature inside it.",
+                                #f"    - Functions: Please write only the function signature for each function, excluding the function body entirely, ensuring that input and output types are visible.",
+                                #f"    - Others: Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than direct line-by-line correspondence. A block should represent a complete logical unit such as an entire struct definition, conditional block and so on.",# This ensures the translated code maintains its semantic structure rather than being split mid-block.",
                                 #"- Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than direct line-by-line correspondence. A block should represent a complete logical unit such as an entire struct definition, conditional block and so on.",# This ensures the translated code maintains its semantic structure rather than being split mid-block.",
                                 #"- For variables and fields that are part of a struct, please provide the line numbers for the entire struct definition block that contains them, not just the individual line numbers.",
                                 #"- As the value for the 'rust_code' key, write only the function signature for each function or macro function, excluding the function body entirely, ensuring that input and output types are visible.",
@@ -3892,70 +3739,6 @@ def ask_correspondence(repair_target, interface):
                                 "- When writing the translated code in the 'rust_code' field of the JSON response, please ensure that line breaks and indentation are properly reflected.",
                     ])
 
-                """
-                # depreciated
-                if label == 'conditional': # 'conditional'
-                    prompt.extend(["Now please cross-reference the C code before translation with the Rust code after translation, add a new key 'rust_code' to the metadata elements of each block in the JSON format of the original C code, and enter the translated code for each element.", #"The following Rust code has been translated from the original C source code and compiled successfully.",
-                                    "The original C source code retains the following JSON-formatted metadata related to the block enclosed by the start line (c_start_line) and end line (c_end_line).",
-                                    #"Now please cross-reference the C code before translation with the translated Rust code, add two new key to all of the elements (which are identified by element_id) respectively: 'rust_start_line' indicating where the Rust logical block including the corresponding Rust code begins, and 'rust_end_line' indicating where it ends.",
-                                    #"Cross-reference the C code before translation with the Rust code after translation, add a new key 'rust_code' to the metadata elements of each block in the JSON format of the original C code, and enter the translated code for each element.",
-                                    "When responding, please follow the response rules below and generate your response by selecting only one of the following three modes.",
-                                    #"Please provide responses only for the Rust code equivalents of the JSON metadata shown below. Do not respond with code elements other than the JSON metadata shown below.",
-                                    ])
-
-                    prompt.extend(["", "## Response rules:",
-                                "- Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than direct line-by-line correspondence. A block should represent a complete logical unit such as an entire struct definition, conditional block and so on.",# This ensures the translated code maintains its semantic structure rather than being split mid-block.",
-                                "- Please provide responses only for the Rust code equivalents of the JSON metadata shown below. Do not respond with code elements other than the JSON metadata shown below.",
-                                "- If there is no corresponding item, set the \"have_correspondence\" flag to False (and set rust_name, rust_start_line, and rust_end_line to None). If there is, set the \"have_correspondence\" flag to True."
-                                "- If the have_correspondence flag is False, write a code comment in the no_equivalent_reason field explaining why an equivalent Rust implementation does not exist.",
-                                f"- Please provide your answer by writing the JSON content of the {answer_path} as 'modified_data' in 'modify_data' mode.",
-                                f"- Since {answer_path} will continue to be updated, set 'start_line' to 1 and 'end_line' to -1 for the {answer_path} modification area.",
-                                "- When writing the translated code in the 'rust_code' field of the JSON response, please ensure that line breaks and indentation are properly reflected.",
-                        ]) 
-
-                elif label == 'others': # 'macro_func', 'data_type', 'global_var' - these three
-
-                    prompt.extend(["Now please cross-reference the C code before translation with the Rust code after translation, add a new key 'rust_code' to the metadata elements of each block in the JSON format of the original C code, and enter the translated code for each element.", #"The following Rust code has been translated from the original C source code and compiled successfully.",
-                                    "The original C source code retains the following JSON-formatted metadata related to the C element named 'c_name', enclosed by the start line (c_start_line) and end line (c_end_line).",
-                                    #"Now please cross-reference the C code before translation with the translated Rust code, add two new key to all of the elements (which are identified by element_id) respectively: 'rust_start_line' indicating where the Rust logical block including the corresponding Rust code begins, and 'rust_end_line' indicating where it ends.",
-                                    "If there is no corresponding item, set the \"have_correspondence\" flag to False (and set rust_name, rust_start_line, and rust_end_line to None). If there is, set the \"have_correspondence\" flag to True."
-                                    "If the have_correspondence flag is False, write a code comment in the no_equivalent_reason field explaining why an equivalent Rust implementation does not exist.",
-                                    #"Cross-reference the C code before translation with the Rust code after translation, add a new key 'rust_code' to the metadata of each element block in the JSON format of the original C code, and enter the translated code for each element.",
-                                    "When responding, please follow the response rules below and generate your response by selecting only one of the following three modes."
-
-                    ])
-
-                    prompt.extend(["", "## Response rules:",
-                                "- Please determine the line numbers (rust_start_line and rust_end_line) based on logical Rust code blocks rather than direct line-by-line correspondence. A block should represent a complete logical unit such as an entire struct definition, conditional block and so on.",# This ensures the translated code maintains its semantic structure rather than being split mid-block.",
-                                "- For variables and fields that are part of a struct, please provide the line numbers for the entire struct definition block that contains them, not just the individual line numbers.",
-                                #"- If there is no corresponding item, set the \"have_correspondence\" flag to False (and set rust_name, rust_start_line, and rust_end_line to None). If there is, set the \"have_correspondence\" flag to True."
-                                "- Please provide responses only for the Rust code equivalents of the JSON metadata shown below. Do not respond with code elements other than the JSON metadata shown below.",
-                                f"- Please provide your answer by writing the JSON content of the {answer_path} as 'modified_data' in 'modify_data' mode.",
-                                f"- Since {answer_path} will continue to be updated, set 'start_line' to 1 and 'end_line' to -1 for the {answer_path} modification area.",
-                                "- When writing the translated code in the 'rust_code' field of the JSON response, please ensure that line breaks and indentation are properly reflected.",
-                        ])  
-                    
-                elif label == 'function': # 'func_def
-                    prompt.extend(["Now please cross-reference the C code before translation with the Rust code after translation, add a new key 'rust_code' to the metadata elements of each block in the JSON format of the original C code, and enter the translated code for each element.", #"The following Rust code has been translated from the original C source code and compiled successfully.",
-                                "The original C source code retains the following JSON-formatted metadata related to the function named 'name', enclosed by the start line (start_line) and end line (end_line).",
-                                #"Now please cross-reference the C code before translation with the Rust code after translation, and add a new key 'rust_code' to each function entry in the JSON metadata.",
-                                "When responding, please follow the response rules below and generate your response by selecting only one of the following three modes.",
-                                # "For the 'rust_start_line' key, write the line number in the Rust code where each 'rust_code' appears in the following Rust code after translation.",
-                                #"Provide the response in the value of the 'answer' key in JSON format.",
-                                ])
-
-                    prompt.extend(["", "## Response rules:", 
-                                "- Please provide responses only for the Rust code equivalents of the JSON metadata shown below. Do not respond with code elements other than the JSON metadata shown below.",
-                                "- As the value for the 'rust_code' key, write only the function signature for each function or macro function, excluding the function body entirely, ensuring that input and output types are visible.",
-                                "- In addition, as the value for the 'rust_function_name' key, write only the function name.",
-                                "- If there is no corresponding item, set the \"have_correspondence\" flag to False. If there is, set the \"have_correspondence\" flag to True.",
-                                "- If the have_correspondence flag is False, write a code comment in the no_equivalent_reason field explaining why an equivalent Rust implementation does not exist.",
-                                f"- Please provide your answer by writing the JSON content of the {answer_path} as 'modified_data' in 'modify_data' mode.",
-                                f"- Since {answer_path} will continue to be updated, set 'start_line' to 1 and 'end_line' to -1 for the {answer_path} modification area.",
-                                "- When writing the translated code in the 'rust_code' field of the JSON response, please ensure that line breaks and indentation are properly reflected.",
-                    ])
-                """
-
                 prompt.extend([f"- To avoid hitting the token limit, keep the JSON data included in one response within {output_max} tokens, and provide only the first part of the JSON data with clear separation for now, even if the response will be split into multiple parts.", # If it's a long response,
                     f"- If the response is split into multiple parts and there is still remaining JSON data, write a boolean value of True for the 'ongoing' key. If the JSON data is the final part, write a boolean value of False for the 'ongoing' key.",
                     ])
@@ -3964,33 +3747,12 @@ def ask_correspondence(repair_target, interface):
                                #"- When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes).",
                                #"- When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes.",
                                ])
-                #prompt.extend(["The format of the response will be as follows:", corresp_format])
-                
+
                 prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"]) 
-                #prompt.extend([json_template])
-                #prompt.extend([autonomous_template])
                 prompt.extend([ask_map_template])
 
-            
-                """
-                #tmp_rust_path = create_rust_base_json(c_path, meta_dir, label, div_start_line)
-                tmp_rust_path = create_tmp_rust_json(c_path, meta_dir, label) # , div_start_line
-                tmp_rust_path = transform_tmp(tmp_rust_path, label) # Added this
-                tmp_json_data = read_file(tmp_rust_path) # Reading temporarily #Also, json data cannot be embedded into the prompt list when read as json, so using read_file().
-                """
-
-                #c_json_data = obtain_metadata(c_path, meta_dir, False, False)
-                
-                rust_code = get_lined_code(rust_path, work_dir)
-                #c_code = get_lined_code(c_path, work_dir)  # rust_add_line_numbers("tmp_c.c", modified_start_line)
+                rust_code = get_lined_code(rust_path, work_dir) #c_code = get_lined_code(c_path, work_dir)  # rust_add_line_numbers("tmp_c.c", modified_start_line)
                 c_code = get_unit_code_with_location(one_unit, database_dir) # , original_dir, target_dir
-
-                # Removed this
-                # if modified_files:
-                #     prompt.extend(["", "## Rust files that were modified:"])
-                # for mod_path in modified_files:
-                #     prompt.append(f"    - {mod_path}")
-
 
                 #prompt.extend(["## The converted Rust source code:", rust_code])
                 prompt.extend(["", f"## The original C source code:", c_code])
@@ -4001,37 +3763,23 @@ def ask_correspondence(repair_target, interface):
                 else:
                     prompt.extend(["", f"## The original C source code ({c_path}):", c_code])  # inserted_c_code])
                 """
-                prompt.extend([f"## The converted Rust source code:", rust_code]) # ({rust_path})
-
-                #prompt.extend(["", f"## The original C JSON-formatted metadata for {c_path} ({label} blocks):", tmp_json_data])
+                prompt.extend([f"## The converted Rust source code:", rust_code]) 
                 prompt.extend(["", f"## The original C JSON-formatted metadata:", tmp_json_data])
 
             else:
                 if error is None:
-                    # prompt.extend(["Please continue providing the JSON data that maps between the C and Rust code.",
-                    #     "The format of the response will be as follows:",
-                    #     corresp_format])
                     prompt = []
                     prompt.extend(["Please continue providing the JSON data that maps between the C and Rust code.",
-                                #"- When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes).",
-                               #"- When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes.",
-                              
                                     ])
 
                 else:
                     if ongoing_flag is False:
                         prompt = []
                         prompt.extend(["Please continue providing the JSON data that maps between the C and Rust code.",
-                                #"- When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes).",
-                               #"- When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes.",
-                              
                                         ])
                     else:
                         prompt = []
                         prompt.extend(["Please continue providing the JSON data that maps between the C and Rust code.",
-                                #"- When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes).",
-                               #"- When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes.",
-                              
                                          ])
 
                 prompt.extend(["Please select only one of the three modes when responding and generate your response accordingly."])
@@ -4063,7 +3811,6 @@ def ask_correspondence(repair_target, interface):
                     ])
                 
                 prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"]) 
-                #prompt.extend([json_template])
                 prompt.extend([autonomous_template])
 
                 prompt.extend([f"- Please use the following JSON format when writing to {answer_path}:"]) 
@@ -4071,13 +3818,10 @@ def ask_correspondence(repair_target, interface):
 
 
                 rust_code = get_lined_code(rust_path, work_dir)
-                c_code = get_lined_code(c_path, work_dir)  # rust_add_line_numbers("tmp_c.c", modified_start_line)
+                c_code = get_lined_code(c_path, work_dir)
 
-                prompt.extend(["", f"## The original C source code ({c_path}):", c_code])  # inserted_c_code])
-                prompt.extend([f"## The converted Rust source code:", rust_code]) #  ({rust_path})
-
-                #prompt.extend(["", f"## The JSON-formatted metadata for {c_path} ({label} blocks):", tmp_json_data])
-
+                prompt.extend(["", f"## The original C source code ({c_path}):", c_code])
+                prompt.extend([f"## The converted Rust source code:", rust_code])
             
             else:
                 if error is None:
@@ -4161,9 +3905,8 @@ def ask_correspondence(repair_target, interface):
                     prompt.extend(sentence)
 
                 prompt.extend(["", "## Target C program:"])
-                directory_structure = get_dir_struct("translation", raw_dir, None)  #rust_output_dir)
+                directory_structure = get_dir_struct("translation", raw_dir, None) 
                 prompt.extend([directory_structure, ""])
-
 
             else:
                 if ongoing_flag is False:
@@ -4172,7 +3915,6 @@ def ask_correspondence(repair_target, interface):
                 else:
                     prompt = []
                     prompt.extend(["Please continue providing the answer on the definition location (macro type) when converting C conditional compilation to Rust."])
-
 
         if repair_target == "judge_macros":  # Used commonly across multiple files
             conds_status_path = interface.conds_status_path
@@ -4270,7 +4012,6 @@ def ask_correspondence(repair_target, interface):
             prompt.extend(read_prompt)
             read_prompt = None # Initialization
 
-        #prompt = get_auto_prompt(prompt, execute_path)
         print(f"ongoing_flag is {ongoing_flag}")
 
         if ongoing_flag is False and repair_target != "ask_correspondence" and repair_target != "ask_generates": # and repair_target != "judge_conds" and repair_target != "judge_macros":
@@ -4350,19 +4091,12 @@ def ask_correspondence(repair_target, interface):
             prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"]) 
             prompt.extend([autonomous_template])
             
-            #prompt.extend([see_template])
-        
-
-            
             if error is not None and error is not True:
-                #if repair_count != 1 and repair_target == "build":
-                #    prompt.extend([f"## Error that occurred when executing the Rust program (executing the shell script at {run_path}):", error])
-                
                 prompt.extend(["", "## Error:", error])
 
             if repair_target == "compile":
                 prompt.extend(["", "## Directory structure of the target Rust program:"])
-                directory_structure = get_dir_struct("translation", work_dir, None)  #rust_output_dir)
+                directory_structure = get_dir_struct("translation", work_dir, None) 
                 prompt.extend([directory_structure, ""])
 
                 if W_O_DEP:
@@ -4498,7 +4232,6 @@ def ask_correspondence(repair_target, interface):
                                                 #"- If you want to overwrite the entire file rather than just modifying the specified line range, set the value of 'overwrite_all' to True.",
                                                 "- Set the value of \"no_simplification\" to True if the functionality intended before modification exists completely without any omission and simplification. Set it to False otherwise.",
                                                 "- If the target file for editing is a JSON file, set the \"is_JSON\" flag to True and insert the modified JSON data into \"modified_data\"",
-                                                #""
                                                 "- In modifications, do NOT use unsafe or raw pointers. Instead, please use appropriate safe alternatives like Box, Arc, Vec, and others. Depending on your need, use the Rust standard library or crates to achieve equivalent functionality in a safe manner.",
                                                 "- When representing backslashes as byte literals, escape the backslash twice in the source code, and also escape it again in the byte literal, resulting in four backslashes (double backslashes).",
                                                 "- When representing backslashes as character literals, escape the backslash once in the source code and again in the character literal, resulting in two backslashes.",
@@ -4508,7 +4241,7 @@ def ask_correspondence(repair_target, interface):
                                 prompt.extend(["\n## Response format", "In summary, please respond in the following JSON format:"])
                                 prompt.extend([modify_template])
 
-                                seq_code = get_lined_code(seq_path, work_dir)  #read_file(seq_path)
+                                seq_code = get_lined_code(seq_path, work_dir)
                                 prompt.extend([f"## Code in {seq_path}:", seq_code])
 
                                 child_rsp_json = ask_llm(prompt, "continue", llm_interface)
@@ -4589,16 +4322,20 @@ def ask_correspondence(repair_target, interface):
 
         ######################## Proceed file by file ########################
 
+        print(f"Running program for the mode: {mode}")
         if mode == 'modify_data':
+            print(f"In mode: {mode}")
+            # Not including modifications for the same start_line, end_line. For example, in the case of split responses with start_line = 1, end_line = 600, start_line and end_line remain the same throughout.
             for item in sum_modified_list:
                 if item['file_path'] != answer_path:
-                    item['file_path'] = answer_path
+                    item['file_path'] = answer_path # added
 
             part_editied_files = reflect_line_modification(sum_modified_list, work_dir, database_dir)
             editied_files.extend(part_editied_files)
-        
+
         elif mode == 'read_data':
-            read_prompt = ["The content obtained in read_data mode is as follows.", ""] # Even if there was a previous response with the 'ongoing' flag set to true, this response must include None in the "answer" key of the JSON data as shown below.
+            print(f"In mode: {mode}")
+            read_prompt = ["The content obtained in read_data mode is as follows.", ""] 
 
             for see_path in sum_target_list:
                 file_code = get_lined_code(see_path, work_dir)
@@ -4618,10 +4355,12 @@ def ask_correspondence(repair_target, interface):
 
 
         elif mode == 'execute_command':
+            print(f"In mode: {mode}")
             execute_error, execute_out, repair_count = run_script(execute_path, 50, True, None, "both", None, repair_count, None, None, mode)
             
         repair_count += 1
 
+    # Putting this on hold for now
     iteration_dict[rust_path] = repair_count
 
     if repair_target == "build" or repair_target == "compile":
@@ -4637,7 +4376,406 @@ def ask_correspondence(repair_target, interface):
         write_json(answer_path, data)
 
 
-        
+def ask_correspondence_agent(repair_target, interface):
+
+    ################################################
+    ##### Setup
+    ################################################
+
+    one_unit = interface.one_unit
+    work_dir = interface.work_dir
+    database_dir = interface.database_dir
+    raw_dir = interface.raw_dir
+    REPAIR_MAX = interface.repair_max
+    repair_count = interface.repair_count
+
+    run_path = interface.rust_build_path
+    rust_path = interface.rust_path
+    rust_output_dir = interface.rust_output_dir
+
+    agent_iface = interface.llm_interface   # AgentInterface
+
+    work_dir_abs = os.path.abspath(work_dir)
+    database_dir_abs = os.path.abspath(database_dir)
+
+    if not os.path.exists(run_path):
+        create_file(run_path)
+
+    # Per-target fields
+    answer_path = None
+    if repair_target == "build":
+        lib_path = interface.lib_path
+        conds_data = read_json(interface.conds_status_path)
+
+    elif repair_target in ("ask_generates", "judge_conds", "judge_macros"):
+        answer_path = os.path.abspath(interface.answer_path)
+        conds_data = read_json(interface.conds_status_path)
+        if repair_target == "ask_generates":
+            macro_type = interface.macro_type
+            target_path = interface.target_path
+
+    elif repair_target in ("ask_correspondence", "ask_unimplemented"):
+        answer_path = os.path.abspath(interface.answer_path)
+        key_json = interface.key_json
+        if repair_target == "ask_unimplemented":
+            c_path = os.path.abspath(interface.c_path)
+
+
+    ################################################
+    ##### Prompt construction (first call only)
+    ################################################
+
+    prompt = []
+    if repair_target == "build":
+        macro_list = [{"name": m, "value": it['value']}
+                      for m, it in conds_data.items() if it['defined'] is True]
+
+        prompt = [f"The following macro variables are those defined (enabled) during C compilation. Please convert their equivalents to Rust and write them into {lib_path} using the Edit or Write tool.",
+                  "",
+                  "## Rules:",
+                  f"- Use only {lib_path}; do not create src/main.rs.",
+                  "- The target code will be compiled on Linux (Ubuntu 22.04 LTS).",
+                  "- Convert only the specified elements; do not add extra function definitions.",
+                  f"- After editing, run `bash {run_path}` with the Bash tool and fix any compilation errors until it succeeds."]
+        if macro_list:
+            prompt.extend(["", "## Defined macro variables and their values:"])
+            prompt.extend([f"{it['name']}: {it['value']}" for it in macro_list])
+
+    elif repair_target == "ask_correspondence":
+        c_code = get_unit_code_with_location(one_unit, database_dir)
+        rust_code = get_lined_code(rust_path, work_dir)
+
+        prompt = ["Now please cross-reference the original C code with the translated Rust code, and for each element in the JSON metadata below, add the keys described in the rules.",
+                  f"Write the completed JSON to {answer_path} using the Write tool. Overwrite the whole file.",
+                  "",
+                  "## Rules:",
+                  "- Answer only for the elements listed in the JSON metadata below.",
+                  "- Determine rust_start_line and rust_end_line based on logical Rust code blocks, not line-by-line correspondence.",
+                  "- For each function, write only the function signature in 'rust_code', excluding the body, so input and output types remain visible.",
+                  "- If no corresponding item exists, set 'have_correspondence' to False and explain why in 'no_equivalent_reason'. Otherwise set it to True.",
+                  "- Keep 'name', 'start_line', and 'end_line' from the C metadata unchanged.",
+                  f"- Do not modify any file other than {answer_path}.",
+                  "",
+                  "## The original C source code:", c_code,
+                  "## The converted Rust source code:", rust_code,
+                  "",
+                  "## The original C JSON-formatted metadata:", key_json]
+
+    elif repair_target == "ask_generates":
+        macro_list = [{"name": m} for m, info in conds_data.items()
+                      if info['macro_type'] == macro_type]
+        rust_code = get_lined_code(target_path, work_dir)
+
+        tmp_json_data = json.dumps(
+            [{"name": it['name'], "rust_start_line": None, "rust_end_line": None}
+             for it in macro_list], indent=2)
+
+        prompt = [f"The following C macro variables have been translated into Rust and written into {target_path}.",
+                  f"Refer to the Rust code below and, for each element in the JSON metadata, fill in 'rust_start_line' and 'rust_end_line'.",
+                  f"Write the completed JSON to {answer_path} using the Write tool. Overwrite the whole file.",
+                  "",
+                  "## Macro variables defined in the original C program:"]
+        prompt.extend([it['name'] for it in macro_list])
+        prompt.extend(["", f"## Rust Code in {target_path}:", rust_code,
+                       "", "## The original C JSON-formatted metadata:", tmp_json_data])
+
+    elif repair_target == "ask_unimplemented":
+        rust_code = get_lined_code(rust_path, work_dir)
+        c_code = get_lined_code(c_path, work_dir)
+
+        prompt = ["Identify elements in the converted Rust code that are marked as 'unimplemented'.",
+                  f"Write your findings as JSON to {answer_path} using the Write tool.",
+                  "",
+                  "## Rules:",
+                  "- For each unimplemented element, fill in 'rust_file_path', 'rust_start_line', 'rust_end_line' based on logical code blocks.",
+                  "- If a corresponding C element exists, set 'have_correspondence' to True with 'c_name' and 'c_file_path'; otherwise False with 'no_equivalent_reason'.",
+                  f"- Do not modify any file other than {answer_path}.",
+                  "",
+                  "## Output JSON format:",
+                  unimpl_template,
+                  "",
+                  f"## The original C source code ({c_path}):", c_code,
+                  "## The converted Rust source code:", rust_code]
+
+    elif repair_target in ("judge_conds", "judge_macros"):
+        macro_list = [{"name": m, "value": d['value']}
+                      for m, e in conds_data.items() for d in e['timeline']]
+
+        kind = ("conditional compilation" if repair_target == "judge_conds"
+                else "commonly used across multiple files")
+        prompt = [f"Macro variables {kind} in C code are defined and used as shown below, and we intend to convert them to Rust.",
+                  "For each macro variable, determine which location (macro type) is appropriate as the definition location in Rust.",
+                  f"Write your answer as JSON to {answer_path} using the Write tool.",
+                  "",
+                  "## Rules:",
+                  "- Select one macro type per variable from: CARGO (Cargo.toml), BUILD (build.rs), LIB (lib.rs), MODULE (per-file Rust module).",
+                  "- The build command is `cargo build --release` with no options, so do not rely on --features or --cfg flags; enable everything within Cargo.toml, build.rs, lib.rs, or module files.",
+                  "- If you need more context, read the source files with the Read tool.",
+                  f"- Do not modify any file other than {answer_path}.",
+                  "",
+                  "## Output JSON format:",
+                  judge_template]
+        if macro_list:
+            prompt.extend(["", "## Macro variables in C:"])
+            prompt.extend([f"{it['name']}: {it['value']}" for it in macro_list])
+        prompt.extend(["", "## Target C program:",
+                       get_dir_struct("translation", raw_dir, None)])
+
+
+    ################################################
+    ##### Agent interaction
+    ################################################
+
+    if repair_target in ("build", "compile"):
+        # Error-feedback loop: orchestrator judges, agent fixes.
+        memory_type = "init"
+        while True:
+            if repair_count >= REPAIR_MAX:
+                print(f"Force to finish. Hit the REPAIR_MAX ({REPAIR_MAX}).")
+                sys.exit(1)
+
+            result = ask_agent(prompt, memory_type, agent_iface)
+            memory_type = "continue"
+            repair_count += 1
+
+            error, std_out, repair_count = run_script(
+                run_path, 50, True, None, "both", None, repair_count, None, None, None)
+            print(f"Judging at run_script: error: {error}")
+            if error is None:
+                break
+
+            prompt = [f"The following errors occurred when compiling {rust_output_dir}. Please fix them by editing the files directly, then run `bash {run_path}` again to verify.",
+                      "Do not repeat a solution that has already been tried.",
+                      "", "## Error:", error]
+
+    else:
+        # Single-shot with validation retry.
+        memory_type = "init"
+        while True:
+            if repair_count >= REPAIR_MAX:
+                print(f"Force to finish. Hit the REPAIR_MAX ({REPAIR_MAX}).")
+                sys.exit(1)
+
+            ask_agent(prompt, memory_type, agent_iface)
+            memory_type = "continue"
+            repair_count += 1
+
+            try:
+                data = read_json(answer_path)
+                if data:
+                    break
+                fail_reason = f"{answer_path} is empty."
+            except Exception as e:
+                fail_reason = f"{answer_path} is not valid JSON: {e}"
+
+            prompt = [f"{fail_reason}",
+                      f"Please write the complete answer JSON to {answer_path} again using the Write tool, following the same format as before."]
+
+        write_json(answer_path, data)  # normalize formatting
+
+    return repair_count
+
+
+
+###########################################################################
+######## Agentic coding
+###########################################################################
+
+@dataclass
+class AgentInterface:
+    """Successor of LLMInterface.
+
+    API-key pooling and trimming settings are gone; instead this describes the execution environment the agent runs in.
+    """
+    project_id: str
+    occupy_path: str
+    llm_choice: str
+    #full_regions: Dict[str, Any]
+    llm_model: str
+    api_key: str
+    azure_endpoint: str
+    work_dir: str                          # working directory for the agent (cwd)
+    allowed_tools: List[str]               # restrict per task, e.g. ["Read", "Grep", "Write"]
+    add_dirs: List[str]  
+    system_prompt: Optional[str] = None
+    max_turns: int = 30                    # successor of REPAIR_MAX
+    permission_mode: str = "acceptEdits"
+    AGENT: bool = False
+
+    # Logging / accounting (reuses existing file layout)
+    database_dir: Optional[str] = None
+    chat_dir: Optional[str] = None
+    count_path: Optional[str] = None
+    token_path: Optional[str] = None
+
+    # Session continuity (successor of history_path; stores a single session id)
+    session_path: Optional[str] = None
+
+
+@dataclass
+class AgentResult:
+    """Structured result of one agent run."""
+    result_text: Optional[str]     # final text from Claude
+    num_turns: Optional[int]
+    is_error: bool
+    session_id: Optional[str]
+    total_cost_usd: Optional[float]
+
+
+def _to_prompt_string(prompt) -> str:
+    """Accept both a list of lines (as built by the orchestrator code) and a
+    plain string. Successor of create_prompt_string() from the ask_llm era,
+    inlined here so llm_api has no dependency on the orchestrator module.
+    """
+    if isinstance(prompt, list):
+        return "\n".join(str(p) for p in prompt)
+    return prompt
+
+
+async def _ask_agent(prompt: str, memory_type: str, iface: AgentInterface) -> AgentResult:
+
+    # --- 0. Normalize: list-of-lines -> single string (old create_prompt_string) ---
+    prompt = _to_prompt_string(prompt)
+
+    # --- 1. Log the request (reuse existing write_prompt) ---
+    prompt = clean_prompt(prompt)
+    write_prompt(iface.database_dir, "request", prompt, iface.chat_dir, iface.count_path)
+    write_prompt(iface.database_dir, "user", prompt, iface.chat_dir, iface.count_path)
+
+    # --- 2. Conversation continuity: equivalent of init / continue ---
+    # Original: read/write a chat-history JSON at history_path and trim it manually.
+    # Now: the SDK owns the transcript; we only persist the session id.
+    resume_id = None
+    if memory_type == "continue" and iface.session_path and os.path.exists(iface.session_path):
+        stored = read_file(iface.session_path)
+        resume_id = stored.strip() if stored else None
+    elif memory_type != "init" and memory_type != "continue":
+        raise ValueError("memory_type must be 'init' or 'continue'.")
+
+    options = ClaudeAgentOptions(
+        cwd=iface.work_dir,
+        model=iface.llm_model,
+        system_prompt=iface.system_prompt,
+        allowed_tools=iface.allowed_tools,
+        permission_mode=iface.permission_mode,
+        max_turns=iface.max_turns,
+        resume=resume_id,                  # None starts a fresh session (= "init")
+        add_dirs=iface.add_dirs or [], 
+    )
+
+    # result_msg: Optional[ResultMessage] = None
+    # assistant_log: List[str] = []
+    result_msg: Optional[ResultMessage] = None
+    assistant_log: List[str] = []
+
+    def ts() -> str:
+        return time.strftime("%H:%M:%S")
+
+    # --- Retry: successor of the 100-line per-provider exception ladder ---
+    # Rate limits and transient API errors are retried inside the SDK/CLI.
+    # This outer loop only guards against process-level failures.
+    delay = 5
+    for attempt in range(3):
+        try:
+            async for message in query(prompt=prompt, options=options):
+
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            assistant_log.append(block.text)
+                            print(f"[{ts()}][agent] {block.text}", flush=True)
+                        elif isinstance(block, ToolUseBlock):
+                            assistant_log.append(f"[tool: {block.name}] {block.input}")
+                            print(f"[{ts()}][tool: {block.name}] {str(block.input)[:300]}", flush=True)
+
+                elif isinstance(message, UserMessage):
+                    # Console-only: show tool results, do not store them.
+                    if isinstance(message.content, list):
+                        for block in message.content:
+                            if isinstance(block, ToolResultBlock):
+                                text = block.content
+                                if isinstance(text, list):
+                                    text = " ".join(b.get("text", "") for b in text
+                                                    if isinstance(b, dict))
+                                # status = "ERROR" if block.is_error else "ok"
+                                # print(f"[result:{status}] {str(text)[:300]}", flush=True)
+
+                                status = "ERROR" if block.is_error else "ok"
+                                print(f"[{ts()}][result:{status}] {str(text)[:300]}", flush=True)
+
+                elif isinstance(message, ResultMessage):
+                    result_msg = message
+
+                """
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            assistant_log.append(block.text)
+                        elif isinstance(block, ToolUseBlock):
+                            # This is where the old read_data / modify_data /
+                            # execute_command mode dispatch used to live.
+                            # Now it is just observed for logging purposes.
+                            assistant_log.append(f"[tool: {block.name}] {block.input}")
+
+                elif isinstance(message, ResultMessage):
+                    result_msg = message
+                """
+            break
+
+        except Exception as e:
+            if attempt == 2:
+                raise
+            print(f"Agent query failed: {e}. Retrying in {delay}s...")
+            await asyncio.sleep(delay)
+            delay *= 2
+
+    # --- 3. Log the response, 4. record tokens/cost (reuse existing helpers) ---
+    write_prompt(iface.database_dir, "response", "\n".join(assistant_log),
+                 iface.chat_dir, iface.count_path)
+    write_prompt(iface.database_dir, "llm",
+                 result_msg.result if result_msg else None,
+                 iface.chat_dir, iface.count_path)
+
+    if result_msg is not None:
+        usage = result_msg.usage or {}
+        update_token(
+            usage.get("input_tokens", 0),
+            usage.get("output_tokens", 0),
+            iface.token_path,
+        )
+
+        # Unlike calc_claude_cost_from_file, no manual price table is needed.
+        if result_msg.total_cost_usd is not None:
+            cost_path = f"{iface.database_dir}/cost_total.txt"
+            prev = "0"
+            if os.path.exists(cost_path):
+                prev = read_file(cost_path) or "0"
+            total = float(prev.strip() or 0) + result_msg.total_cost_usd
+            write_file(cost_path, str(total))
+            print(f"Cost this call: ${result_msg.total_cost_usd:.4f} (cumulative: ${total:.2f})", flush=True)
+
+
+        # Continuation of step 2: persist the session id for the next "continue"
+        if iface.session_path and result_msg.session_id:
+            write_file(iface.session_path, result_msg.session_id)
+
+    return AgentResult(
+        result_text=result_msg.result if result_msg else None,
+        num_turns=result_msg.num_turns if result_msg else None,
+        is_error=result_msg.is_error if result_msg else True,
+        session_id=result_msg.session_id if result_msg else None,
+        total_cost_usd=result_msg.total_cost_usd if result_msg else None,
+    )
+
+
+def ask_agent(prompt: str, memory_type: str, iface: AgentInterface) -> AgentResult:
+    """Synchronous wrapper so existing (synchronous) orchestrator code
+    can call this as a drop-in replacement for ask_llm().
+    """
+    return asyncio.run(_ask_agent(prompt, memory_type, iface))
+
+
+
 def get_claude_model(llm_choice):
 
     claude_model = None
@@ -4646,12 +4784,16 @@ def get_claude_model(llm_choice):
         #claude_model = 'databricks-claude-sonnet-4-5'
         #claude_model = 'databricks-claude-opus-4-5'
         #claude_model = 'databricks-claude-opus-4-6'
-        claude_model = 'databricks-claude-opus-4-7'
+        #claude_model = 'databricks-claude-opus-4-7'
+        #claude_model = 'databricks-claude-opus-4-8'
+        claude_model = 'databricks-claude-opus-5'
 
     elif llm_choice == "claude":
         #claude_model = 'claude-sonnet-4-5-20250929'
         #claude_model = 'claude-opus-4-6'
-        claude_model = 'claude-opus-4-7'
+        #claude_model = 'claude-opus-4-7'
+        #claude_model = 'claude-opus-4-8'
+        claude_model = 'claude-opus-5'
 
     return claude_model
 
