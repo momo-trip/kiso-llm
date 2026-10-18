@@ -297,87 +297,6 @@ class CorConfig:
     verbose: bool = False
 
 
-
-@dataclass
-class SemConfig:
-    mix_io_dir: str
-    c_io_dir: str
-    rust_io_dir: str
-    build_path: str
-    rust_build_path: str
-    run_test_path: str
-    run_all_path: str
-    rust_c_path: str
-    c_rust_path: str
-    target: str
-    #modified_lines: Dict[str, Any]
-    #key_json: Dict[str, Any]
-    raw_dir: str
-    #llm_choice: str
-    llm_interface: LLMInterface
-    target_dir: str
-    chat_dir: str
-    database_dir : str
-    time_path: str
-    work_dir: str
-    token_path: str
-    original_target_dir: str
-    meta_dir: str
-    dep_json_path: str
-    repair_count: int
-    execute_path: str
-    explore_time: float
-    notes: str
-    cov_target : str
-    log_dir: str
-    max_iterations: int
-    flow_on: bool
-    #api_key: str
-
-    # Optional fields
-    rust_path: str = None # We do not need this at the initial build moment
-    c_path: str = None
-    div_start_line: int = None
-    before_count: int = None
-    add_prompt: str = None
-    progress_queue: Optional[Queue] = None
-    original_run_test_path: str = None
-    select: bool = False
-    test_path: Optional[str] = None
-    file_path: Optional[str] = None
-    test_id: Optional[str] = None
-    function_name: Optional[str] = None
-    main_flag: Optional[bool] = None
-    
-    # Should be cleaned up
-    callee_main_path: str = None
-    entry: Dict[str, Any] = None
-    test_type: str = None
-    snap_dir: str = None
-    tmp_dir: str = None
-    cov_report_path: str = None
-    run_gdb_path: str = None
-    run_val_path: str = None
-    target_path: str = None
-    target_function: str = None
-    target_uncovered_ratio: float = None
-    target_branch: int = None
-    target_line: int = None
-    target_end_line: int = None
-    target_cmd: str = None
-    cmd_list: List[str] = None
-    cmd_exe: str = None
-
-
-    # LLM-related
-    model: str = None
-    max_tokens: int = 4000
-    temperature: float = 0.7
-    timeout: int = 300
-    system_prompt: Optional[str] = None
-    verbose: bool = False
-
-
 def add_line_numbers(input_file):
     if not os.path.isfile(input_file):
         return
@@ -587,7 +506,7 @@ def load_prompt_count(logging_path):
     data["prompt_id"] = str(int(num) + 1).zfill(4)  #num + 1
     write_json(logging_path, data)
 
-    return str(int(num)).zfill(4)  #num
+    return str(int(num)).zfill(4)
 
 
 def write_prompt(database_dir, signal, data, chat_dir, count_path):
@@ -623,7 +542,10 @@ def write_prompt(database_dir, signal, data, chat_dir, count_path):
         print(f"An error occurred while writing to the file: {e}")
         
 
-def update_token(input_token, output_token, token_path):
+def update_token(
+    input_token, output_token, token_path,
+    cache_read_token=0, cache_write_token=0
+):
     # Read data from token_path
     if os.path.exists(token_path):
         data = read_json(token_path)
@@ -637,6 +559,8 @@ def update_token(input_token, output_token, token_path):
         "prompt_id": prompt_id,
         "input_token": input_token,
         "output_token": output_token,
+        "cache_read_token": cache_read_token,
+        "cache_write_token": cache_write_token,
     })
 
     write_json(token_path, data)
@@ -917,6 +841,7 @@ def shutdown_llm(instance: LLMInterface):
             if os.path.exists(token_path):
                 cost = calc_claude_cost_from_file(token_path)
                 print(f"Cost: ${cost['total_cost_usd']:.2f}")
+                
         #item['program'] = None
         found = True
         break
@@ -961,7 +886,7 @@ def is_base64_decodable(string):
 
 def extract_json_response(llm_choice, response_text):
     error_text = None
-    decode_failure = False  # added
+    decode_failure = False  
 
     if isinstance(response_text, dict):
         # If it is already a Python dictionary object
@@ -1074,9 +999,16 @@ def calc_claude_cost_from_file(
     total_input_tokens = sum(int(r.get("input_token", 0) or 0) for r in records)
     total_output_tokens = sum(int(r.get("output_token", 0) or 0) for r in records)
 
+    total_cache_read_tokens = sum(int(r.get("cache_read_token", 0) or 0) for r in records)
+    total_cache_write_tokens = sum(int(r.get("cache_write_token", 0) or 0) for r in records)
+
     input_cost = total_input_tokens / 1_000_000 * input_price_per_million
     output_cost = total_output_tokens / 1_000_000 * output_price_per_million
-    total_cost = input_cost + output_cost
+    # total_cost = input_cost + output_cost
+    
+    cache_read_cost = total_cache_read_tokens / 1_000_000 * input_price_per_million * 0.1
+    cache_write_cost = total_cache_write_tokens / 1_000_000 * input_price_per_million * 1.25
+    total_cost = input_cost + output_cost + cache_read_cost + cache_write_cost
 
     return {
         "total_input_tokens": total_input_tokens,
@@ -1085,6 +1017,14 @@ def calc_claude_cost_from_file(
         "output_cost_usd": output_cost,
         "total_cost_usd": total_cost,
     }
+
+
+def get_model_version(model_name):
+    """Return e.g. (4, 7) for 'claude-opus-4-7', or (3, 5) for 'claude-3-5-sonnet-20241022'."""
+    m = re.search(r"claude-(?:[a-z]+-)?(\d+)(?:-(\d{1,2}))?(?=-|$)", model_name)
+    if not m:
+        return (0, 0)
+    return (int(m.group(1)), int(m.group(2) or 0))
 
 
 def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -> str:
@@ -1128,7 +1068,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     # print("------------")
 
     prompt = clean_prompt(prompt)
-    prompt = create_prompt_string(prompt) #"\n".join(prompt)
+    prompt = create_prompt_string(prompt)
 
     print(f"------------------------ Prompt ------------------------")
     print(f"{prompt}")
@@ -1745,6 +1685,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
             client = anthropic.Anthropic(
                 api_key = given_api_key,
+                base_url=given_base_url or None,
             )
             print("============ chat_histroty start ============")
             # print(chat_history)
@@ -1754,7 +1695,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    if llm_model in ["claude-opus-4-7", "claude-opus-4-8"]:
+                    if get_model_version(llm_model) >= (4, 7): # if llm_model in ["claude-opus-4-7", "claude-opus-4-8"]:
                         with client.messages.stream(
                             model=llm_model,
                             max_tokens=output_max, #32000,
@@ -1974,7 +1915,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             for attempt in range(max_retries):
                 response_flag = False
                 try: 
-                    if llm_model in ["databricks-claude-opus-4-7", "databricks-claude-opus-4-8", "databricks-claude-opus-5"]:
+                    if get_model_version(llm_model) >= (4, 7): # if llm_model in ["databricks-claude-opus-4-7", "databricks-claude-opus-4-8", "databricks-claude-opus-5"]:
                         message = client.chat.completions.create(
                             model=llm_model,
                             max_tokens=output_max,
@@ -2073,6 +2014,21 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
         
             text = message.choices[0].message.content
             finish_reason = message.choices[0].finish_reason
+            if isinstance(text, list):
+                parts = []
+                for block in text:
+                    if isinstance(block, str):
+                        parts.append(block)
+                    elif isinstance(block, dict):
+                        if block.get("type") == "text" and block.get("text"):
+                            parts.append(block["text"])
+                    else:
+                        btype = getattr(block, "type", None)
+                        btext = getattr(block, "text", None)
+                        if btype == "text" and btext:
+                            parts.append(btext)
+                text = "\n".join(parts) if parts else None
+
             if text is None:
                 print(message)
                 print(f"[ask_llm] content is None — finish_reason={finish_reason}, "
@@ -2157,7 +2113,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
                 aws_region=given_region, #"us-west-2",
             )
             print("============ chat_histroty start ============")
-            #print(chat_history)
+            # print(chat_history)
             print("Skipping chat history")
             print("============ chat_histroty end ============")
             max_retries = 5
@@ -2343,7 +2299,7 @@ def get_path_info_wide(callee_main_path, target_entry, function_branch_path):
     all_paths = []
     print(target_entry)
 
-    if callee_data is not None:  # added
+    if callee_data is not None:  
 
         for item in callee_data:
             if item['name'] == target_entry['target_function'] and item['file_path'] == target_entry['target_path']:
@@ -2466,7 +2422,6 @@ def trim_code(target_path, file_code, given_limit, model="gpt-4"):
 
 # Revision proposal
 def trim_data(work_dir, target_path, file_code, given_limit):
-    # given_limit = 8000 #10000
     model = "gpt-4"
     write_file(target_path, file_code)
     
@@ -2514,9 +2469,9 @@ def trim_data(work_dir, target_path, file_code, given_limit):
 
 def get_dir_struct(app_type, target_dir, original_target_dir):
     target_dir = os.path.abspath(target_dir)
-    original_target_dir = os.path.abspath(original_target_dir)
+    if original_target_dir is not None:
+        original_target_dir = os.path.abspath(original_target_dir)
 
-    # print(f"Getting directory structure: {target_dir}")
     parent_path = None
     if original_target_dir is not None:
         parent_path = os.path.dirname(original_target_dir)
@@ -2575,7 +2530,6 @@ def get_dir_struct(app_type, target_dir, original_target_dir):
                 add_tree(item, prefix + next_prefix)
     
     root = Path(target_dir)
-    # result.append(root.name)
     result.append(str(root))
 
     add_tree(target_dir)
@@ -2614,7 +2568,6 @@ def delete_lines(file_path, start_line, end_line):
         with open(file_path, 'w') as file:  # Write the updated contents back to the file
             file.writelines(lines)
         
-        # print(f"Deleted lines from {start_line} to {end_line}.")
     except FileNotFoundError:
         print(f"File '{file_path}' not found.")
     except IOError:
@@ -2662,14 +2615,37 @@ def reflect_line_modification(modifications, work_dir, database_dir):
         if isinstance(data, (dict, list)):
             item['modified_data'] = json.dumps(data, indent=4, ensure_ascii=False)
 
+    # # Handle the shorthand case where end_line = -1
+    # for item in modifications:
+    #     end_line = item['end_line']
+    #     if end_line == -1:
+    #         if item.get('is_JSON', False) or isinstance(item['modified_data'], (dict, list)):
+    #             write_file(item['file_path'], json.dumps(item['modified_data'], indent=4, ensure_ascii=False))
+    #         else:
+    #             write_file(item['file_path'], item['modified_data'])
+    
     # Handle the shorthand case where end_line = -1
     for item in modifications:
         end_line = item['end_line']
         if end_line == -1:
-            if item.get('is_JSON', False) or isinstance(item['modified_data'], (dict, list)):
-                write_file(item['file_path'], json.dumps(item['modified_data'], indent=4, ensure_ascii=False))
+            data = item['modified_data']
+            is_json_target = item.get('is_JSON', False) or str(item['file_path']).endswith('.json')
+
+            if is_json_target:
+                # (1) で既に文字列化されているので、パースし直して1回だけ dumps する。
+                # LLM が二重エンコードした文字列を返した場合も、ここで中身まで戻す。
+                while isinstance(data, str):
+                    try:
+                        data = json.loads(data)
+                    except json.JSONDecodeError:
+                        break
+                if isinstance(data, (dict, list)):
+                    write_file(item['file_path'], json.dumps(data, indent=4, ensure_ascii=False))
+                else:
+                    write_file(item['file_path'], data)
             else:
-                write_file(item['file_path'], item['modified_data'])
+                write_file(item['file_path'], data)
+
 
     # Processing
     for item in modifications:  # Insert current_code
@@ -2746,7 +2722,7 @@ def check_excluded(target_dir, see_path):
     abs_path = os.path.abspath(see_path)
 
     abs_excluded_dirs = []
-    excluded_dirs = []  # added — is this correct?
+    excluded_dirs = []  # added
     for excluded_dir in excluded_dirs:
         excluded_dir = f"{target_dir}/{excluded_dir}"
         abs_excluded_dir = os.path.abspath(excluded_dir)
@@ -3105,6 +3081,8 @@ def get_modified_rust_lines(modified_c_keys, c_rust_path, meta_dir):
               {file_path: {'start_line': int, 'end_line': int, 'lines': set}}
     """
     print("get_modified_rust_lines")
+    print(f"modified_c_keys: {len(modified_c_keys)} {sorted(modified_c_keys)[:10]}")
+
     c_rust_map = read_json(c_rust_path)
     modified_rust_lines = {}
     
@@ -3470,7 +3448,7 @@ def ask_correspondence(repair_target, interface):
     if not os.path.exists(run_path):
         create_file(run_path)
 
-    execute_path = f"{work_dir}/execute.sh" #get_execute_path(run_path) #interface.execute_path']
+    execute_path = f"{work_dir}/execute.sh" 
     if not os.path.exists(execute_path):
         create_file(execute_path)
     else:
@@ -3491,11 +3469,11 @@ def ask_correspondence(repair_target, interface):
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
         rust_path = interface.rust_path
-        lib_path = interface.lib_path #f"{rust_output_dir}/src/lib.rs" #interface.lib_path']
+        lib_path = interface.lib_path
         
 
     elif repair_target == "ask_generates":
-        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path   
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -3510,14 +3488,14 @@ def ask_correspondence(repair_target, interface):
     elif repair_target == "ask_correspondence" or repair_target == "ask_unimplemented":
         c_path = interface.c_path
         meta_dir = interface.meta_dir
-        answer_path = interface.answer_path   #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path   
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
         #modified_files = interface.modified_files
 
     elif repair_target == "judge_conds":
-        answer_path = interface.answer_path  #answer_path = f"{work_dir}/answer.json"
+        answer_path = interface.answer_path  
         rust_path = interface.rust_path
         meta_dir = interface.meta_dir
         dep_json_path = interface.dep_json_path
@@ -4300,7 +4278,6 @@ def ask_correspondence(repair_target, interface):
             prompt.extend(["", "## Response Format:"])
             prompt.extend([autonomous_template])
 
-            #tmp_data = read_json(tmp_rust_path)
             if isinstance(key_json, str):
                 tmp_data = json.loads(key_json)
             else:
@@ -4738,11 +4715,20 @@ async def _ask_agent(prompt: str, memory_type: str, iface: AgentInterface) -> Ag
 
     if result_msg is not None:
         usage = result_msg.usage or {}
+
         update_token(
             usage.get("input_tokens", 0),
             usage.get("output_tokens", 0),
             iface.token_path,
+            usage.get("cache_read_input_tokens", 0),
+            usage.get("cache_creation_input_tokens", 0),
         )
+        
+        # update_token(
+        #     usage.get("input_tokens", 0),
+        #     usage.get("output_tokens", 0),
+        #     iface.token_path,
+        # )
 
         # Unlike calc_claude_cost_from_file, no manual price table is needed.
         if result_msg.total_cost_usd is not None:
@@ -4775,18 +4761,51 @@ def ask_agent(prompt: str, memory_type: str, iface: AgentInterface) -> AgentResu
     return asyncio.run(_ask_agent(prompt, memory_type, iface))
 
 
+def update_json_secret(path, update_dict):
+    path = os.path.expanduser(path)
 
-def get_claude_model(llm_choice):
+    if os.path.exists(path):
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    else:
+        data = {}
+
+    data.setdefault("env", {})
+    data["env"].update(update_dict)
+
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2)
+        f.write("\n")
+        
+
+def update_claude_setting(api_key, llm_model, azure_endpoint):
+    update_dict = {
+        "ANTHROPIC_BASE_URL": f"{azure_endpoint}/anthropic",
+        "ANTHROPIC_AUTH_TOKEN" : api_key,
+        "ANTHROPIC_MODEL" : llm_model,
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": llm_model,
+    }
+    update_json_secret(
+        "~/.claude/settings.json",
+        update_dict,
+    )
+    os.environ["IS_SANDBOX"] = "1"
+
+
+def get_claude_latest_model(llm_choice):
 
     claude_model = None
     if llm_choice == "claude_azure":
-        # claude_model = 'databricks-claude-sonnet-4'
+        #claude_model = 'databricks-claude-sonnet-4'
         #claude_model = 'databricks-claude-sonnet-4-5'
         #claude_model = 'databricks-claude-opus-4-5'
         #claude_model = 'databricks-claude-opus-4-6'
         #claude_model = 'databricks-claude-opus-4-7'
         #claude_model = 'databricks-claude-opus-4-8'
         claude_model = 'databricks-claude-opus-5'
+        # claude_model = 'databricks-claude-opus-5.5'
 
     elif llm_choice == "claude":
         #claude_model = 'claude-sonnet-4-5-20250929'
@@ -4794,6 +4813,7 @@ def get_claude_model(llm_choice):
         #claude_model = 'claude-opus-4-7'
         #claude_model = 'claude-opus-4-8'
         claude_model = 'claude-opus-5'
+        # claude_model = 'claude-opus-5.5'
 
     return claude_model
 
