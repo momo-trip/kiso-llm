@@ -762,6 +762,10 @@ def occupy_llm(instance: LLMInterface):
     occupy_data = read_json(occupy_path)
     found = False
 
+    given_endpoint = None
+    given_region = None
+    given_client_id = None
+
     for item in occupy_data[llm_choice]:
         if item['use'] is False:
             if 'region' in item: #and item['region'] in full_regions:
@@ -791,7 +795,7 @@ def occupy_llm(instance: LLMInterface):
     instance.client_id = given_client_id
 
     if 'claude' in llm_choice:
-        instance.llm_model = get_claude_model(llm_choice)
+        instance.llm_model = get_latest_claude_model(llm_choice)
     # given_model = instance.model
     
     return instance
@@ -1021,7 +1025,7 @@ def calc_claude_cost_from_file(
 
 def get_model_version(model_name):
     """Return e.g. (4, 7) for 'claude-opus-4-7', or (3, 5) for 'claude-3-5-sonnet-20241022'."""
-    m = re.search(r"claude-(?:[a-z]+-)?(\d+)(?:-(\d{1,2}))?(?=-|$)", model_name)
+    m = re.search(r"claude-(?:[a-z]+-)?(\d+)(?:[-.](\d{1,2}))?(?=[-.]|$)", model_name)
     if not m:
         return (0, 0)
     return (int(m.group(1)), int(m.group(2) or 0))
@@ -4761,7 +4765,7 @@ def ask_agent(prompt: str, memory_type: str, iface: AgentInterface) -> AgentResu
     return asyncio.run(_ask_agent(prompt, memory_type, iface))
 
 
-def update_json_secret(path, update_dict):
+def update_json_secret(path, update_dict, remove_keys=()):
     path = os.path.expanduser(path)
 
     if os.path.exists(path):
@@ -4770,8 +4774,15 @@ def update_json_secret(path, update_dict):
     else:
         data = {}
 
-    data.setdefault("env", {})
-    data["env"].update(update_dict)
+    # ===== added =====
+    # data.setdefault("env", {})
+    # data["env"].update(update_dict)
+
+    env = data.setdefault("env", {})
+    for k in remove_keys:
+        env.pop(k, None)
+    env.update(update_dict)
+    # ===== ended =====
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -4780,6 +4791,7 @@ def update_json_secret(path, update_dict):
         f.write("\n")
         
 
+"""
 def update_claude_setting(api_key, llm_model, endpoint):
     update_dict = {
         "ANTHROPIC_BASE_URL": f"{endpoint}/anthropic",
@@ -4790,6 +4802,34 @@ def update_claude_setting(api_key, llm_model, endpoint):
     update_json_secret(
         "~/.claude/settings.json",
         update_dict,
+    )
+    os.environ["IS_SANDBOX"] = "1"
+"""
+
+def update_claude_setting(llm_choice, api_key, llm_model, endpoint):
+    if llm_choice == "claude_azure":
+        update_dict = {
+            "ANTHROPIC_BASE_URL": f"{endpoint}/anthropic",
+            "ANTHROPIC_AUTH_TOKEN": api_key,
+        }
+    elif llm_choice == "openrouter":
+        update_dict = {
+            "ANTHROPIC_BASE_URL": "https://openrouter.ai/api",
+            "ANTHROPIC_AUTH_TOKEN": api_key,
+            "ANTHROPIC_API_KEY": "",
+        }
+    else:  # "claude"
+        update_dict = {"ANTHROPIC_API_KEY": api_key}
+        if endpoint:
+            update_dict["ANTHROPIC_BASE_URL"] = endpoint
+
+    update_dict["ANTHROPIC_MODEL"] = llm_model
+    # update_dict["ANTHROPIC_DEFAULT_SONNET_MODEL"] = llm_model
+
+    update_json_secret(
+        "~/.claude/settings.json",
+        update_dict,
+        remove_keys=["ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"],
     )
     os.environ["IS_SANDBOX"] = "1"
 
