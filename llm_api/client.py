@@ -127,7 +127,7 @@ class LLMInterface:
     # system_prompt: Optional[str] = None
 
     # Set paths
-    azure_endpoint: Optional[str] = None
+    endpoint: Optional[str] = None
     history_path: Optional[str] = None
     token_path: Optional[str] = None
     database_dir: Optional[str] = None
@@ -767,8 +767,8 @@ def occupy_llm(instance: LLMInterface):
             if 'region' in item: #and item['region'] in full_regions:
                 continue
             given_api_key = item['given_api_key'] 
-            if 'given_azure_endpoint' in item:
-                given_azure_endpoint = item['given_azure_endpoint'] 
+            if 'given_endpoint' in item:
+                given_endpoint = item['given_endpoint'] 
             if 'region' in item:
                 given_region = item['region']
             if 'given_model' in item:
@@ -786,7 +786,7 @@ def occupy_llm(instance: LLMInterface):
     write_json(occupy_path, occupy_data)
 
     instance.api_key = given_api_key
-    instance.azure_endpoint = given_azure_endpoint
+    instance.endpoint = given_endpoint
     instance.region = given_region
     instance.client_id = given_client_id
 
@@ -798,7 +798,7 @@ def occupy_llm(instance: LLMInterface):
 
 
 
-def configure_llm(instance: LLMInterface, given_api_key: str, given_azure_endpoint: str, given_model: str):
+def configure_llm(instance: LLMInterface, given_api_key: str, given_endpoint: str, given_model: str):
 
     occupy_path = instance.occupy_path
     llm_choice = instance.llm_choice
@@ -806,7 +806,7 @@ def configure_llm(instance: LLMInterface, given_api_key: str, given_azure_endpoi
     #full_regions = instance.full_regions
 
     instance.api_key = given_api_key
-    instance.azure_endpoint = given_azure_endpoint
+    instance.endpoint = given_endpoint
     instance.region = None
     instance.llm_model = given_model
 
@@ -820,7 +820,7 @@ def shutdown_llm(instance: LLMInterface):
         return False, f"Not an LLMInterface: {type(instance)}"
 
     given_api_key = instance.api_key
-    given_azure_endpoint = instance.azure_endpoint
+    given_endpoint = instance.endpoint
     given_region = instance.region
     occupy_path = instance.occupy_path
     llm_choice = instance.llm_choice
@@ -831,12 +831,12 @@ def shutdown_llm(instance: LLMInterface):
     for item in occupy_data[llm_choice]:
         if item['given_api_key'] != given_api_key:
             continue
-        if 'given_azure_endpoint' in item and item['given_azure_endpoint'] != given_azure_endpoint:
+        if 'given_endpoint' in item and item['given_endpoint'] != given_endpoint:
             continue
 
         item['use'] = False
         if 'region' in item:
-            print(f"\nShutdown: {item['region']}, {given_api_key}, {given_azure_endpoint}")
+            print(f"\nShutdown: {item['region']}, {given_api_key}, {given_endpoint}")
 
             if os.path.exists(token_path):
                 cost = calc_claude_cost_from_file(token_path)
@@ -1044,7 +1044,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
     api_key = llm_interface.api_key
 
     given_model = llm_interface.llm_model
-    given_azure_endpoint = llm_interface.azure_endpoint
+    given_endpoint = llm_interface.endpoint
     given_api_key = llm_interface.api_key
     given_temperature = llm_interface.temperature
 
@@ -1059,7 +1059,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
 
     # print("------------")
     # print(given_api_key)
-    # print(given_azure_endpoint)
+    # print(given_endpoint)
     # print(given_temperature)
     # print(llm_model)
     # print(llm_choice)
@@ -1255,7 +1255,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                 client = AzureOpenAI(
                     api_version=given_api_version,
                     api_key=given_api_key,
-                    azure_endpoint=given_azure_endpoint,
+                    endpoint=given_endpoint,
                     timeout=600.0 
                 )
                 response = client.chat.completions.create( #response = openai.ChatCompletion.create(
@@ -1326,7 +1326,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
                         client = AzureOpenAI(
                             api_version=given_api_version,
                             api_key=given_api_key,
-                            azure_endpoint=given_azure_endpoint,
+                            endpoint=given_endpoint,
                             timeout=600.0 
                         )
                         response = client.chat.completions.create( #response = openai.ChatCompletion.create(
@@ -1389,7 +1389,7 @@ def ask_llm(prompt: str, memory_type: str, llm_interface: LLMInterface = None) -
 
             client = OpenAI(
                 api_key=given_api_key,
-                base_url=given_azure_endpoint,
+                base_url=given_endpoint,
                 timeout=httpx.Timeout(600.0, connect=120.0),
             )
             print("============ chat_histroty start ============")
@@ -1685,7 +1685,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
             client = anthropic.Anthropic(
                 api_key = given_api_key,
-                base_url=given_base_url or None,
+                base_url=given_endpoint or None,
             )
             print("============ chat_histroty start ============")
             # print(chat_history)
@@ -1900,7 +1900,7 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
             #"""
             client = OpenAI(
                 api_key=given_api_key,
-                base_url=given_azure_endpoint,
+                base_url=given_endpoint,
                 timeout=httpx.Timeout(600.0, connect=120.0),
                 # max_retries=8,
             )
@@ -2107,9 +2107,9 @@ Also, if there is remaining code, set the value of the 'ongoing' key to a boolea
 
             client = AnthropicBedrock(
                 # api_key=given_api_key,
-                # base_url=given_azure_endpoint
+                # base_url=given_endpoint
                 aws_access_key=given_api_key,
-                aws_secret_key=given_azure_endpoint,
+                aws_secret_key=given_endpoint,
                 aws_region=given_region, #"us-west-2",
             )
             print("============ chat_histroty start ============")
@@ -4570,7 +4570,7 @@ class AgentInterface:
     #full_regions: Dict[str, Any]
     llm_model: str
     api_key: str
-    azure_endpoint: str
+    endpoint: str
     work_dir: str                          # working directory for the agent (cwd)
     allowed_tools: List[str]               # restrict per task, e.g. ["Read", "Grep", "Write"]
     add_dirs: List[str]  
@@ -4780,9 +4780,9 @@ def update_json_secret(path, update_dict):
         f.write("\n")
         
 
-def update_claude_setting(api_key, llm_model, azure_endpoint):
+def update_claude_setting(api_key, llm_model, endpoint):
     update_dict = {
-        "ANTHROPIC_BASE_URL": f"{azure_endpoint}/anthropic",
+        "ANTHROPIC_BASE_URL": f"{endpoint}/anthropic",
         "ANTHROPIC_AUTH_TOKEN" : api_key,
         "ANTHROPIC_MODEL" : llm_model,
         "ANTHROPIC_DEFAULT_SONNET_MODEL": llm_model,
