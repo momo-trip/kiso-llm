@@ -4794,7 +4794,7 @@ def update_claude_setting(api_key, llm_model, endpoint):
     os.environ["IS_SANDBOX"] = "1"
 
 
-def get_claude_latest_model(llm_choice):
+def get_latest_claude_model(llm_choice):
 
     claude_model = None
     if llm_choice == "claude_azure":
